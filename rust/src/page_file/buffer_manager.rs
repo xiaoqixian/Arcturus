@@ -8,7 +8,10 @@
  **********************************************/
 
 use std::fs::File;
-use crate::page_file;
+use rust::page_file;
+use std::io::prelude::*;
+use std::io::SeekFrom;
+use rust::errors;
 
 /*
  * Data structure to represent a page.
@@ -62,7 +65,7 @@ struct BufferManager {
 impl BufferManager {
     //The fp parameter is needed because our pages may be read from multiple files.
     //So we have to specify the file we're reading pages from.
-    pub fn get_page(&self, page_num: i32, fp: &File) -> &mut BufferPageDesc {
+    pub fn get_page(&self, page_num: i32, fp: &File, dest: &mut [u8]) -> &mut BufferPageDesc {
         match self.page_table.get(page_num) {
             Some(v) => {
                 v
@@ -77,9 +80,16 @@ impl BufferManager {
     /*
      * Read a page from the file.
      */
-    fn read_page(&mut self, page_num: i32, fp: &File) {
+    fn read_page(&mut self, page_num: i32, fp: &File) -> Errors::PageFileError {
         let offset = page_num * self.page_size + page_file::PAGE_FILE_HEADER_SIZE;
-
+        f.seek(SeekFrom::Start(offset));
+        let read_bytes = f.read(dest);
+        if read_bytes < 0 {
+            return Errors::PageFileError::Unix;
+        }
+        if read_bytes < self.page_size {
+            return Errors::PageFileError::
+        }
     }
 
     fn unpin(&mut self, page_num: i32) {

@@ -33,6 +33,8 @@
 use std::fs::File;
 use crate::buffer_manager::BufferManager;
 
+static PAGE_FILE_HEADER_SIZE: i32 = 40;
+
 /*
  * We need a data structure to represent a page.
  */
@@ -56,7 +58,7 @@ struct PageFileManager {
     open_flag: i32, //file open flag.
     changed_flag: i32, //mark if the file is changed.
     file_header: PageFileHeader,
-    buffer_manager: BufferManager
+    buffer_manager: BufferManager //the buffer manager and the page file manager are interrelated.
 }
 
 
