@@ -31,16 +31,16 @@
  */
 
 use std::fs::File;
-use crate::buffer_manager::BufferManager;
+use super::buffer_manager::BufferManager;
 
-static PAGE_FILE_HEADER_SIZE: i32 = 40;
+pub static PAGE_FILE_HEADER_SIZE: usize = 40;
 
 /*
  * We need a data structure to represent a page.
  */
 struct Page {
-    page_num: i32, //page number
-    page_data: Box<[char]>
+    page_num: u32, //page number
+    page_data: Vec<u8> 
 }
 
 struct PageFileHeader {
@@ -54,7 +54,7 @@ struct PageFileHeader {
  * of scratch pages.
  */
 struct PageFileManager {
-    fp: &File, //opend file reference.
+    fp: &'static File, //opend file reference.
     open_flag: i32, //file open flag.
     changed_flag: i32, //mark if the file is changed.
     file_header: PageFileHeader,

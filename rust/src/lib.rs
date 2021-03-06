@@ -7,5 +7,5 @@
   > Copyright@ https://github.com/xiaoqixian
  **********************************************/
 
-mod errors;
-mod page_file;
+pub mod errors;
+pub mod page_management;
