@@ -24,6 +24,7 @@ pub enum PageFileError {
     ReadAtError, //error of read_at method
     WriteAtError, 
     LostFilePointer, //returns when we need to use the file pointer of a page, but find it without any.
+    OutOfIndex,
     //Internal errors.
     PageInBuf, //the new page is already in buf.
     PageNotInBuf, //the page to manipulate is not in buffer.

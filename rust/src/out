@@ -1,0 +1,597 @@
+
+running 1 test
+buffer initial length = 128
+Reading page with page_num=0x00010000 from file.
+self.free = 1
+Reading page with page_num=0x00010001 from file.
+self.free = 2
+Reading page with page_num=0x00010002 from file.
+self.free = 3
+Reading page with page_num=0x00010003 from file.
+self.free = 4
+Reading page with page_num=0x00010004 from file.
+self.free = 5
+Reading page with page_num=0x00010005 from file.
+self.free = 6
+Reading page with page_num=0x00010006 from file.
+self.free = 7
+Reading page with page_num=0x00010007 from file.
+self.free = 8
+Reading page with page_num=0x00010008 from file.
+self.free = 9
+Reading page with page_num=0x00010009 from file.
+self.free = 10
+Reading page with page_num=0x0001000a from file.
+self.free = 11
+Reading page with page_num=0x0001000b from file.
+self.free = 12
+Reading page with page_num=0x0001000c from file.
+self.free = 13
+Reading page with page_num=0x0001000d from file.
+self.free = 14
+Reading page with page_num=0x0001000e from file.
+self.free = 15
+Reading page with page_num=0x0001000f from file.
+self.free = 16
+Reading page with page_num=0x00010010 from file.
+self.free = 17
+Reading page with page_num=0x00010011 from file.
+self.free = 18
+Reading page with page_num=0x00010012 from file.
+self.free = 19
+Reading page with page_num=0x00010013 from file.
+self.free = 20
+Reading page with page_num=0x00010014 from file.
+self.free = 21
+Reading page with page_num=0x00010015 from file.
+self.free = 22
+Reading page with page_num=0x00010016 from file.
+self.free = 23
+Reading page with page_num=0x00010017 from file.
+self.free = 24
+Reading page with page_num=0x00010018 from file.
+self.free = 25
+Reading page with page_num=0x00010019 from file.
+self.free = 26
+Reading page with page_num=0x0001001a from file.
+self.free = 27
+Reading page with page_num=0x0001001b from file.
+self.free = 28
+Reading page with page_num=0x0001001c from file.
+self.free = 29
+Reading page with page_num=0x0001001d from file.
+self.free = 30
+Reading page with page_num=0x0001001e from file.
+self.free = 31
+Reading page with page_num=0x0001001f from file.
+self.free = 32
+Reading page with page_num=0x00010020 from file.
+self.free = 33
+Reading page with page_num=0x00010021 from file.
+self.free = 34
+Reading page with page_num=0x00010022 from file.
+self.free = 35
+Reading page with page_num=0x00010023 from file.
+self.free = 36
+Reading page with page_num=0x00010024 from file.
+self.free = 37
+Reading page with page_num=0x00010025 from file.
+self.free = 38
+Reading page with page_num=0x00010026 from file.
+self.free = 39
+Reading page with page_num=0x00010027 from file.
+self.free = 40
+Reading page with page_num=0x00010028 from file.
+self.free = 41
+Reading page with page_num=0x00010029 from file.
+self.free = 42
+Reading page with page_num=0x0001002a from file.
+self.free = 43
+Reading page with page_num=0x0001002b from file.
+self.free = 44
+Reading page with page_num=0x0001002c from file.
+self.free = 45
+Reading page with page_num=0x0001002d from file.
+self.free = 46
+Reading page with page_num=0x0001002e from file.
+self.free = 47
+Reading page with page_num=0x0001002f from file.
+self.free = 48
+Reading page with page_num=0x00010030 from file.
+self.free = 49
+Reading page with page_num=0x00010031 from file.
+self.free = 50
+Reading page with page_num=0x00010032 from file.
+self.free = 51
+Reading page with page_num=0x00010033 from file.
+self.free = 52
+Reading page with page_num=0x00010034 from file.
+self.free = 53
+Reading page with page_num=0x00010035 from file.
+self.free = 54
+Reading page with page_num=0x00010036 from file.
+self.free = 55
+Reading page with page_num=0x00010037 from file.
+self.free = 56
+Reading page with page_num=0x00010038 from file.
+self.free = 57
+Reading page with page_num=0x00010039 from file.
+self.free = 58
+Reading page with page_num=0x0001003a from file.
+self.free = 59
+Reading page with page_num=0x0001003b from file.
+self.free = 60
+Reading page with page_num=0x0001003c from file.
+self.free = 61
+Reading page with page_num=0x0001003d from file.
+self.free = 62
+Reading page with page_num=0x0001003e from file.
+self.free = 63
+Reading page with page_num=0x0001003f from file.
+self.free = 64
+Reading page with page_num=0x00010040 from file.
+self.free = 65
+Reading page with page_num=0x00010041 from file.
+self.free = 66
+Reading page with page_num=0x00010042 from file.
+self.free = 67
+Reading page with page_num=0x00010043 from file.
+self.free = 68
+Reading page with page_num=0x00010044 from file.
+self.free = 69
+Reading page with page_num=0x00010045 from file.
+self.free = 70
+Reading page with page_num=0x00010046 from file.
+self.free = 71
+Reading page with page_num=0x00010047 from file.
+self.free = 72
+Reading page with page_num=0x00010048 from file.
+self.free = 73
+Reading page with page_num=0x00010049 from file.
+self.free = 74
+Reading page with page_num=0x0001004a from file.
+self.free = 75
+Reading page with page_num=0x0001004b from file.
+self.free = 76
+Reading page with page_num=0x0001004c from file.
+self.free = 77
+Reading page with page_num=0x0001004d from file.
+self.free = 78
+Reading page with page_num=0x0001004e from file.
+self.free = 79
+Reading page with page_num=0x0001004f from file.
+self.free = 80
+Reading page with page_num=0x00010050 from file.
+self.free = 81
+Reading page with page_num=0x00010051 from file.
+self.free = 82
+Reading page with page_num=0x00010052 from file.
+self.free = 83
+Reading page with page_num=0x00010053 from file.
+self.free = 84
+Reading page with page_num=0x00010054 from file.
+self.free = 85
+Reading page with page_num=0x00010055 from file.
+self.free = 86
+Reading page with page_num=0x00010056 from file.
+self.free = 87
+Reading page with page_num=0x00010057 from file.
+self.free = 88
+Reading page with page_num=0x00010058 from file.
+self.free = 89
+Reading page with page_num=0x00010059 from file.
+self.free = 90
+Reading page with page_num=0x0001005a from file.
+self.free = 91
+Reading page with page_num=0x0001005b from file.
+self.free = 92
+Reading page with page_num=0x0001005c from file.
+self.free = 93
+Reading page with page_num=0x0001005d from file.
+self.free = 94
+Reading page with page_num=0x0001005e from file.
+self.free = 95
+Reading page with page_num=0x0001005f from file.
+self.free = 96
+Reading page with page_num=0x00010060 from file.
+self.free = 97
+Reading page with page_num=0x00010061 from file.
+self.free = 98
+Reading page with page_num=0x00010062 from file.
+self.free = 99
+Reading page with page_num=0x00010063 from file.
+self.free = 100
+Reading page with page_num=0x00010064 from file.
+self.free = 101
+Reading page with page_num=0x00010065 from file.
+self.free = 102
+Reading page with page_num=0x00010066 from file.
+self.free = 103
+Reading page with page_num=0x00010067 from file.
+self.free = 104
+Reading page with page_num=0x00010068 from file.
+self.free = 105
+Reading page with page_num=0x00010069 from file.
+self.free = 106
+Reading page with page_num=0x0001006a from file.
+self.free = 107
+Reading page with page_num=0x0001006b from file.
+self.free = 108
+Reading page with page_num=0x0001006c from file.
+self.free = 109
+Reading page with page_num=0x0001006d from file.
+self.free = 110
+Reading page with page_num=0x0001006e from file.
+self.free = 111
+Reading page with page_num=0x0001006f from file.
+self.free = 112
+Reading page with page_num=0x00010070 from file.
+self.free = 113
+Reading page with page_num=0x00010071 from file.
+self.free = 114
+Reading page with page_num=0x00010072 from file.
+self.free = 115
+Reading page with page_num=0x00010073 from file.
+self.free = 116
+Reading page with page_num=0x00010074 from file.
+self.free = 117
+Reading page with page_num=0x00010075 from file.
+self.free = 118
+Reading page with page_num=0x00010076 from file.
+self.free = 119
+Reading page with page_num=0x00010077 from file.
+self.free = 120
+Reading page with page_num=0x00010078 from file.
+self.free = 121
+Reading page with page_num=0x00010079 from file.
+self.free = 122
+Reading page with page_num=0x0001007a from file.
+self.free = 123
+Reading page with page_num=0x0001007b from file.
+self.free = 124
+Reading page with page_num=0x0001007c from file.
+self.free = 125
+Reading page with page_num=0x0001007d from file.
+self.free = 126
+Reading page with page_num=0x0001007e from file.
+self.free = 127
+Reading page with page_num=0x0001007f from file.
+self.free = -1
+unpin page_num=0x00010000
+self.last points to 0
+unpin page_num=0x00010001
+unpin page_num=0x00010002
+unpin page_num=0x00010003
+unpin page_num=0x00010004
+unpin page_num=0x00010005
+unpin page_num=0x00010006
+unpin page_num=0x00010007
+unpin page_num=0x00010008
+unpin page_num=0x00010009
+unpin page_num=0x0001000a
+unpin page_num=0x0001000b
+unpin page_num=0x0001000c
+unpin page_num=0x0001000d
+unpin page_num=0x0001000e
+unpin page_num=0x0001000f
+unpin page_num=0x00010010
+unpin page_num=0x00010011
+unpin page_num=0x00010012
+unpin page_num=0x00010013
+unpin page_num=0x00010014
+unpin page_num=0x00010015
+unpin page_num=0x00010016
+unpin page_num=0x00010017
+unpin page_num=0x00010018
+unpin page_num=0x00010019
+unpin page_num=0x0001001a
+unpin page_num=0x0001001b
+unpin page_num=0x0001001c
+unpin page_num=0x0001001d
+unpin page_num=0x0001001e
+unpin page_num=0x0001001f
+unpin page_num=0x00010020
+unpin page_num=0x00010021
+unpin page_num=0x00010022
+unpin page_num=0x00010023
+unpin page_num=0x00010024
+unpin page_num=0x00010025
+unpin page_num=0x00010026
+unpin page_num=0x00010027
+unpin page_num=0x00010028
+unpin page_num=0x00010029
+unpin page_num=0x0001002a
+unpin page_num=0x0001002b
+unpin page_num=0x0001002c
+unpin page_num=0x0001002d
+unpin page_num=0x0001002e
+unpin page_num=0x0001002f
+unpin page_num=0x00010030
+unpin page_num=0x00010031
+unpin page_num=0x00010032
+unpin page_num=0x00010033
+unpin page_num=0x00010034
+unpin page_num=0x00010035
+unpin page_num=0x00010036
+unpin page_num=0x00010037
+unpin page_num=0x00010038
+unpin page_num=0x00010039
+unpin page_num=0x0001003a
+unpin page_num=0x0001003b
+unpin page_num=0x0001003c
+unpin page_num=0x0001003d
+unpin page_num=0x0001003e
+unpin page_num=0x0001003f
+Reading page with page_num=0x00010080 from file.
+No free pages
+Free page with index=0
+self.free = -1
+Reading page with page_num=0x00010081 from file.
+No free pages
+Free page with index=1
+self.free = -1
+Reading page with page_num=0x00010082 from file.
+No free pages
+Free page with index=2
+self.free = -1
+Reading page with page_num=0x00010083 from file.
+No free pages
+Free page with index=3
+self.free = -1
+Reading page with page_num=0x00010084 from file.
+No free pages
+Free page with index=4
+self.free = -1
+Reading page with page_num=0x00010085 from file.
+No free pages
+Free page with index=5
+self.free = -1
+Reading page with page_num=0x00010086 from file.
+No free pages
+Free page with index=6
+self.free = -1
+Reading page with page_num=0x00010087 from file.
+No free pages
+Free page with index=7
+self.free = -1
+Reading page with page_num=0x00010088 from file.
+No free pages
+Free page with index=8
+self.free = -1
+Reading page with page_num=0x00010089 from file.
+No free pages
+Free page with index=9
+self.free = -1
+Reading page with page_num=0x0001008a from file.
+No free pages
+Free page with index=10
+self.free = -1
+Reading page with page_num=0x0001008b from file.
+No free pages
+Free page with index=11
+self.free = -1
+Reading page with page_num=0x0001008c from file.
+No free pages
+Free page with index=12
+self.free = -1
+Reading page with page_num=0x0001008d from file.
+No free pages
+Free page with index=13
+self.free = -1
+Reading page with page_num=0x0001008e from file.
+No free pages
+Free page with index=14
+self.free = -1
+Reading page with page_num=0x0001008f from file.
+No free pages
+Free page with index=15
+self.free = -1
+Reading page with page_num=0x00010090 from file.
+No free pages
+Free page with index=16
+self.free = -1
+Reading page with page_num=0x00010091 from file.
+No free pages
+Free page with index=17
+self.free = -1
+Reading page with page_num=0x00010092 from file.
+No free pages
+Free page with index=18
+self.free = -1
+Reading page with page_num=0x00010093 from file.
+No free pages
+Free page with index=19
+self.free = -1
+Reading page with page_num=0x00010094 from file.
+No free pages
+Free page with index=20
+self.free = -1
+Reading page with page_num=0x00010095 from file.
+No free pages
+Free page with index=21
+self.free = -1
+Reading page with page_num=0x00010096 from file.
+No free pages
+Free page with index=22
+self.free = -1
+Reading page with page_num=0x00010097 from file.
+No free pages
+Free page with index=23
+self.free = -1
+Reading page with page_num=0x00010098 from file.
+No free pages
+Free page with index=24
+self.free = -1
+Reading page with page_num=0x00010099 from file.
+No free pages
+Free page with index=25
+self.free = -1
+Reading page with page_num=0x0001009a from file.
+No free pages
+Free page with index=26
+self.free = -1
+Reading page with page_num=0x0001009b from file.
+No free pages
+Free page with index=27
+self.free = -1
+Reading page with page_num=0x0001009c from file.
+No free pages
+Free page with index=28
+self.free = -1
+Reading page with page_num=0x0001009d from file.
+No free pages
+Free page with index=29
+self.free = -1
+Reading page with page_num=0x0001009e from file.
+No free pages
+Free page with index=30
+self.free = -1
+Reading page with page_num=0x0001009f from file.
+No free pages
+Free page with index=31
+self.free = -1
+Reading page with page_num=0x000100a0 from file.
+No free pages
+Free page with index=32
+self.free = -1
+Reading page with page_num=0x000100a1 from file.
+No free pages
+Free page with index=33
+self.free = -1
+Reading page with page_num=0x000100a2 from file.
+No free pages
+Free page with index=34
+self.free = -1
+Reading page with page_num=0x000100a3 from file.
+No free pages
+Free page with index=35
+self.free = -1
+Reading page with page_num=0x000100a4 from file.
+No free pages
+Free page with index=36
+self.free = -1
+Reading page with page_num=0x000100a5 from file.
+No free pages
+Free page with index=37
+self.free = -1
+Reading page with page_num=0x000100a6 from file.
+No free pages
+Free page with index=38
+self.free = -1
+Reading page with page_num=0x000100a7 from file.
+No free pages
+Free page with index=39
+self.free = -1
+Reading page with page_num=0x000100a8 from file.
+No free pages
+Free page with index=40
+self.free = -1
+Reading page with page_num=0x000100a9 from file.
+No free pages
+Free page with index=41
+self.free = -1
+Reading page with page_num=0x000100aa from file.
+No free pages
+Free page with index=42
+self.free = -1
+Reading page with page_num=0x000100ab from file.
+No free pages
+Free page with index=43
+self.free = -1
+Reading page with page_num=0x000100ac from file.
+No free pages
+Free page with index=44
+self.free = -1
+Reading page with page_num=0x000100ad from file.
+No free pages
+Free page with index=45
+self.free = -1
+Reading page with page_num=0x000100ae from file.
+No free pages
+Free page with index=46
+self.free = -1
+Reading page with page_num=0x000100af from file.
+No free pages
+Free page with index=47
+self.free = -1
+Reading page with page_num=0x000100b0 from file.
+No free pages
+Free page with index=48
+self.free = -1
+Reading page with page_num=0x000100b1 from file.
+No free pages
+Free page with index=49
+self.free = -1
+Reading page with page_num=0x000100b2 from file.
+No free pages
+Free page with index=50
+self.free = -1
+Reading page with page_num=0x000100b3 from file.
+No free pages
+Free page with index=51
+self.free = -1
+Reading page with page_num=0x000100b4 from file.
+No free pages
+Free page with index=52
+self.free = -1
+Reading page with page_num=0x000100b5 from file.
+No free pages
+Free page with index=53
+self.free = -1
+Reading page with page_num=0x000100b6 from file.
+No free pages
+Free page with index=54
+self.free = -1
+Reading page with page_num=0x000100b7 from file.
+No free pages
+Free page with index=55
+self.free = -1
+Reading page with page_num=0x000100b8 from file.
+No free pages
+Free page with index=56
+self.free = -1
+Reading page with page_num=0x000100b9 from file.
+No free pages
+Free page with index=57
+self.free = -1
+Reading page with page_num=0x000100ba from file.
+No free pages
+Free page with index=58
+self.free = -1
+Reading page with page_num=0x000100bb from file.
+No free pages
+Free page with index=59
+self.free = -1
+Reading page with page_num=0x000100bc from file.
+No free pages
+Free page with index=60
+self.free = -1
+Reading page with page_num=0x000100bd from file.
+No free pages
+Free page with index=61
+self.free = -1
+Reading page with page_num=0x000100be from file.
+No free pages
+Free page with index=62
+self.free = -1
+Reading page with page_num=0x000100bf from file.
+No free pages
+Free page with index=63
+self.free = -1
+Reading page with page_num=0x000100c0 from file.
+No free pages
+Free page with index=18446744073709551615
+Buffer pool new capacity: 256
+self.free = -1
+Reading page with page_num=0x000100c1 from file.
+No free pages
+Free page with index=18446744073709551615
+test page_management::buffer_manager::tests::buffer_manager_test2 ... FAILED
+
+failures:
+
+failures:
+    page_management::buffer_manager::tests::buffer_manager_test2
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+
