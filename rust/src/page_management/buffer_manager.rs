@@ -46,7 +46,7 @@ extern crate env_logger;
 
 #[derive(Debug)]
 pub struct BufferPage {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
     next: i32,
     prev: i32,
     dirty: bool,
@@ -85,6 +85,14 @@ impl BufferPage {
                 }
             }
         }
+    }
+
+    pub fn mark_dirty(&mut self) {
+        self.dirty = false;
+    }
+
+    pub fn page_num(&self) -> u32 {
+        self.page_num
     }
 }
 
@@ -160,6 +168,10 @@ impl BufferManager {
             free: 0,
             page_table: HashMap::new()
         }
+    }
+
+    pub fn get_pagesize(&self) -> usize {
+        self.page_size
     }
 
     fn resize_buffer(&mut self) {
@@ -378,97 +390,6 @@ impl BufferManager {
         page.prev = -1;
         page.next = -1;
     }
-
-    /*
-    pub fn get_page<'a>(&'a mut self, page_num: u32, fp: &File) -> Option<&'a mut BufferPage> {
-        let cap = self.buffer_table.capacity();
-        let index: usize = match self.page_table.get(&page_num) {
-            None => cap,//index cannot be equal to or greater than the buffer_table capacity.
-            Some(v) => *v
-        };
-        if index < cap {
-            debug!("Getting page with page_num={:#010x} from buffer", page_num);
-            self.update_page(index);
-            Some(unsafe {
-                &mut *self.buffer_table[index].as_ptr()
-            })
-        } else {
-            debug!("Reading page with page_num={:#010x} from file.", page_num);
-            if self.free == -1 {
-                debug!("No free pages");
-                debug!("Free page with index={}", self.last as usize);
-                match self.free_page(self.last as usize) {
-                    PageFileError::Okay => {},
-                    PageFileError::OutOfIndex => {
-                        error!("Trying to free page with index={}", index);
-                    }
-                    PageFileError::Unix => {
-                        error!("Unix read error.");
-                        return None;
-                    },
-                    PageFileError::IncompleteRead => {
-                        error!("Incomplete read when read a new page.");
-                        return None;
-                    },
-                    PageFileError::HashPageExist => {
-                        error!("HashPageExist: This is impossible.");
-                        return None;
-                    },
-                    PageFileError::NoPage => {
-                        self.resize_buffer();
-                    },
-                    PageFileError::PageFreed => {
-                        debug!("Tha page is already freed.");
-                    },
-                    PageFileError::PagePinned => {
-                        debug!("The page is pinned");
-                    },
-                    PageFileError::NoFilePointer => {
-                        debug!("The page lost its file pointer ");
-                        return None;
-                    },
-                    PageFileError::WriteAtError => {
-                        debug!("write_at method error");
-                        return None;
-                    },
-                    _ => {
-                        eprintln!("Unexpected errors happend");
-                        return None;
-                    }
-                }
-            }
-            let newpage_index = self.free as usize;
-            match self.read_page(page_num, fp, newpage_index) {
-                PageFileError::Okay => {},                    
-                PageFileError::ReadAtError => {
-                    error!("read_at function error.");
-                    return None;
-                },
-                PageFileError::IncompleteRead => {
-                    error!("read_at function IncompleteRead");
-                    return None;
-                }
-                PageFileError::DestShort => {
-                    error!("Unexpected error: page data length is too short");
-                    return None;
-                },
-                _ => {
-                    error!("Unexpected error occured");
-                    return None;
-                }
-            }
-            self.page_table.insert(page_num, newpage_index);
-            self.num_pages += 1;
-            let new_page = unsafe {&mut *self.buffer_table[newpage_index].as_ptr()};
-            self.free = new_page.next;
-            debug!("self.free = {}", self.free);
-            new_page.next = -1;
-            new_page.pin_count = 1;
-            new_page.page_num = page_num;
-            new_page.fp = Some(fp.try_clone().unwrap());
-            Some(new_page)
-        }
-    }*/
 
     pub fn get_page<'a>(&'a mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
         let cap = self.buffer_table.capacity();

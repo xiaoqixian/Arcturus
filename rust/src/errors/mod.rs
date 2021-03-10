@@ -37,3 +37,11 @@ pub enum PageFileError {
     InvalidName, //invalid file name
     Unix, //error in Unix system call or library routine.
 }
+
+pub enum RecordError {
+    NoFilePointer,
+    InvalidPageNumber,
+    InvalidSlotNumber,
+    ExternalMethodsFailure,
+    OffsetError,
+}
