@@ -12,13 +12,14 @@ use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::FileExt;
 use std::ptr::NonNull;
+use std::fs::OpenOptions;
 
 use crate::errors::PageFileError;
 use super::page_file;
 use log::{*};
 extern crate env_logger;
 
-use std::{println as info, println as debug, println as warn, println as error};
+//use std::{println as info, println as debug, println as warn, println as error};
 /*
  * Memory and References.
  * Let me explain how I resolve memory passing between functions
@@ -51,7 +52,7 @@ pub struct BufferPage {
     dirty: bool,
     pin_count: u32,
     page_num: u32,
-    fp: Option<&'static File>
+    fp: Option<File>
 }
 
 impl BufferPage {
@@ -75,7 +76,14 @@ impl BufferPage {
             dirty: self.dirty,
             pin_count: self.pin_count,
             page_num: self.page_num,
-            fp: self.fp
+            fp: {
+                match &self.fp {
+                    None => None,
+                    Some(v) => {
+                        Some(v.try_clone().unwrap())
+                    }
+                }
+            }
         }
     }
 }
@@ -89,7 +97,14 @@ impl Clone for BufferPage {
             dirty: self.dirty,
             pin_count: self.pin_count,
             page_num: self.page_num,
-            fp: self.fp
+            fp: {
+                match &self.fp {
+                    None => None,
+                    Some(v) => {
+                        Some(v.try_clone().unwrap())
+                    }
+                }
+            }
         }
     }
 }
@@ -150,8 +165,6 @@ impl BufferManager {
     fn resize_buffer(&mut self) {
         let cap = self.buffer_table.capacity() as u32;
         if self.num_pages < cap {
-            dbg!("No need to resize buffer");
-            dbg!("Buffer capacity = {}, while number of pages = {}", cap, self.num_pages);
             return ;
         }
         self.buffer_table.resize((cap << 1) as usize, NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap());
@@ -162,18 +175,11 @@ impl BufferManager {
             unsafe {
                 let mut new_page = Box::new(BufferPage::new());
                 new_page.next = start+i+1;
-                if i < 10 {
-                    dbg!(start+i);
-                    dbg!(new_page.clone_metadata());}
                 self.buffer_table[(start+i) as usize] = NonNull::new(Box::into_raw(new_page)).unwrap();
             }
-            dbg!(unsafe {self.buffer_table[128].as_ref().clone_metadata()});
         }
-        dbg!((cap<<1) -1 );
         self.buffer_table[((cap<<1) - 1) as usize] = NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap();
         self.free = start;
-        dbg!(self.free);
-        dbg!(unsafe {self.buffer_table[128].as_ref().clone_metadata()});
     }
 
     fn read_page(&mut self, page_num: u32, fp: &File, index: usize) -> PageFileError {
@@ -217,14 +223,12 @@ impl BufferManager {
      * possibility that there are more than 1<<16 pages in one file.
      * In this way, we can make sure each page number is identical.
      */
-    fn write_page(&self, page_num: u32, page_data: &Vec<u8>, fp: Option<&File>) -> PageFileError {
-        if let None = fp {
-            return PageFileError::NoFilePointer;
-        }
+    fn write_page(&self, page_num: u32, page_data: &Vec<u8>, fp: &File) -> PageFileError {
         let location = (page_num & 0x0000ffff) as usize;
         let offset = (location * self.page_size + page_file::PAGE_FILE_HEADER_SIZE) as u64;
-        let res = fp.unwrap().write_at(page_data.as_slice(), offset);
-        if let Err(_) = res {
+        let res = fp.write_at(page_data.as_slice(), offset);
+        if let Err(v) = res {
+            dbg!(v);
             return PageFileError::WriteAtError;
         }
         let write_bytes = res.unwrap();
@@ -236,7 +240,7 @@ impl BufferManager {
 
     /*
      * Free a page in buffer, the page must be unpinned.
-     * Function needed when there is no free page.
+     * Method needed when there is no free page.
      */
     fn free_page(&mut self, index: usize) -> PageFileError {
         let temp = -1;
@@ -257,7 +261,10 @@ impl BufferManager {
             return PageFileError::PageFreed;
         }
         if page.dirty {
-            let res = self.write_page(page.page_num, &page.data, page.fp);
+            if let None = &page.fp {
+                return PageFileError::NoFilePointer;
+            }
+            let res = self.write_page(page.page_num, &page.data, &page.fp.as_ref().unwrap());
             if let PageFileError::Okay = res {
 
             } else {
@@ -279,6 +286,7 @@ impl BufferManager {
         //link the page to the free list.
         page.next = self.free;
         page.prev = -1;
+        page.fp = None;
         self.free = index as i32;
         self.num_pages -= 1;
         PageFileError::Okay
@@ -323,7 +331,7 @@ impl BufferManager {
             debug!("self.last points to {}", index);
             self.last = index as i32;
         }
-        dbg!(page.clone_metadata());
+        //dbg!(page.clone_metadata());
     }
 
     /*
@@ -371,6 +379,7 @@ impl BufferManager {
         page.next = -1;
     }
 
+    /*
     pub fn get_page<'a>(&'a mut self, page_num: u32, fp: &File) -> Option<&'a mut BufferPage> {
         let cap = self.buffer_table.capacity();
         let index: usize = match self.page_table.get(&page_num) {
@@ -407,9 +416,23 @@ impl BufferManager {
                     },
                     PageFileError::NoPage => {
                         self.resize_buffer();
-                    }
+                    },
+                    PageFileError::PageFreed => {
+                        debug!("Tha page is already freed.");
+                    },
+                    PageFileError::PagePinned => {
+                        debug!("The page is pinned");
+                    },
+                    PageFileError::NoFilePointer => {
+                        debug!("The page lost its file pointer ");
+                        return None;
+                    },
+                    PageFileError::WriteAtError => {
+                        debug!("write_at method error");
+                        return None;
+                    },
                     _ => {
-                        error!("Unexpected errors happened.");
+                        eprintln!("Unexpected errors happend");
                         return None;
                     }
                 }
@@ -442,7 +465,96 @@ impl BufferManager {
             new_page.next = -1;
             new_page.pin_count = 1;
             new_page.page_num = page_num;
+            new_page.fp = Some(fp.try_clone().unwrap());
             Some(new_page)
+        }
+    }*/
+
+    pub fn get_page<'a>(&'a mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
+        let cap = self.buffer_table.capacity();
+        let index: usize = match self.page_table.get(&page_num) {
+            None => cap,//index cannot be equal to or greater than the buffer_table capacity.
+            Some(v) => *v
+        };
+        if index < cap {
+            debug!("Getting page with page_num={:#010x} from buffer", page_num);
+            self.update_page(index);
+            Some(self.buffer_table[index])
+        } else {
+            debug!("Reading page with page_num={:#010x} from file.", page_num);
+            if self.free == -1 {
+                debug!("No free pages");
+                debug!("Free page with index={}", self.last as usize);
+                match self.free_page(self.last as usize) {
+                    PageFileError::Okay => {},
+                    PageFileError::OutOfIndex => {
+                        error!("Trying to free page with index={}", index);
+                    }
+                    PageFileError::Unix => {
+                        error!("Unix read error.");
+                        return None;
+                    },
+                    PageFileError::IncompleteRead => {
+                        error!("Incomplete read when read a new page.");
+                        return None;
+                    },
+                    PageFileError::HashPageExist => {
+                        error!("HashPageExist: This is impossible.");
+                        return None;
+                    },
+                    PageFileError::NoPage => {
+                        self.resize_buffer();
+                    },
+                    PageFileError::PageFreed => {
+                        debug!("Tha page is already freed.");
+                    },
+                    PageFileError::PagePinned => {
+                        debug!("The page is pinned");
+                    },
+                    PageFileError::NoFilePointer => {
+                        debug!("The page lost its file pointer ");
+                        return None;
+                    },
+                    PageFileError::WriteAtError => {
+                        debug!("write_at method error");
+                        return None;
+                    },
+                    _ => {
+                        eprintln!("Unexpected errors happend");
+                        return None;
+                    }
+                }
+            }
+            let newpage_index = self.free as usize;
+            match self.read_page(page_num, fp, newpage_index) {
+                PageFileError::Okay => {},                    
+                PageFileError::ReadAtError => {
+                    error!("read_at function error.");
+                    return None;
+                },
+                PageFileError::IncompleteRead => {
+                    error!("read_at function IncompleteRead");
+                    return None;
+                }
+                PageFileError::DestShort => {
+                    error!("Unexpected error: page data length is too short");
+                    return None;
+                },
+                _ => {
+                    error!("Unexpected error occured");
+                    return None;
+                }
+            }
+            self.page_table.insert(page_num, newpage_index);
+            self.num_pages += 1;
+            let new_page = unsafe {&mut *self.buffer_table[newpage_index].as_ptr()};
+            self.free = new_page.next;
+            debug!("self.free = {}", self.free);
+            new_page.next = -1;
+            new_page.pin_count = 1;
+            new_page.page_num = page_num;
+            new_page.fp = Some(fp.try_clone().unwrap());
+            Some(self.buffer_table[newpage_index])
         }
     }
 
@@ -503,59 +615,96 @@ mod tests {
      * Read 129 pages, none of them get unpinned, see if the buffer
      * will resized.
      */
-    #[test]
-    fn buffer_manager_test1() {
-        let mut buffer = BufferManager::new();
-        let fp = File::open("/home/lunar/Documents/fzf");
-        if let Err(_) = fp {
-            panic!("Open file failed.");
-        }
-        let f = &(fp.unwrap());
-        let file_num: u32 = 1<<16;
-        for i in 0..129 {
-            dbg!(i);
-            match buffer.get_page(file_num | (i as u32), f) {
-                None => {
-                    panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                },
-                Some(_) => {}
-            }
-        }
-    }
+//    #[test]
+    //fn buffer_manager_test1() {
+        //let mut buffer = BufferManager::new();
+        //let f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
+        //let file_num: u32 = 1<<16;
+        //for i in 0..129 {
+            //match buffer.get_page(file_num | (i as u32), &f) {
+                //None => {
+                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
+                //},
+                //Some(_) => {}
+            //}
+        //}
+    //}
 
     /*
      * Test2:
-     * Read 128 pages, unpin half of them, then read another 128 pages.
+     * Read 128 pages, make them dirty, unpin half of them, then read another 128 pages.
      */
+    //#[test]
+    //fn buffer_manager_test2() {
+        //let mut buffer = BufferManager::new();
+        //let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
+        //let file_num: u32 = 1<<16;
+        //for i in 0..128 {
+            //match buffer.get_page(file_num | (i as u32), &f) {
+                //None => {
+                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
+                //},
+                //Some(v) => {
+                    //v.data[0] = 127;
+                    //v.dirty = true;
+                //}
+            //}
+        //}
+        //for i in 0..64 {
+            //debug!("unpin page_num={:#010x}", file_num | (i as u32));
+            //buffer.unpin(file_num | (i as u32));
+        //}
+        //for i in 0..32 {
+            //match buffer.get_page(file_num | (i as u32), &f) {
+                //None => {
+                    //panic!("read page_num={:#010x} failed");
+                //},
+                //Some(_) => {}
+            //}
+        //}
+        //for i in 128..256 {
+            //match buffer.get_page(file_num | (i as u32), &f) {
+                //None => {
+                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
+                //},
+                //Some(_) => {}
+            //}
+        //}
+    //}
+
+    /*
+     * BufferManager Test3
+     * Discontinously Read Pages.
+     */
+    //#[test]
+    //fn buffer_manager_test3() {
+        //let mut buffer = BufferManager::new();
+        //let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
+        //let file_num: u32 = 1<<16;
+        //for i in 0..65 {
+            //let page_num = file_num | (2*i as u32);
+            //match buffer.get_page(page_num, &f) {
+                //None => {
+                    //panic!("Reading page_num={:#010x} failed", page_num);
+                //},
+                //Some(v) => {
+                    
+                //}
+            //}
+        //}
+    //}
+
     #[test]
-    fn buffer_manager_test2() {
+    fn buffer_manager_test4() {
         let mut buffer = BufferManager::new();
-        let fp = File::open("/home/lunar/Documents/fzf");
-        if let Err(_) = fp {
-            panic!("Open file failed.");
-        }
-        let f = &(fp.unwrap());
+        let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
         let file_num: u32 = 1<<16;
-        for i in 0..128 {
-            match buffer.get_page(file_num | (i as u32), f) {
-                None => {
-                    panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                },
-                Some(_) => {}
-            }
-        }
-        for i in 0..64 {
-            debug!("unpin page_num={:#010x}", file_num | (i as u32));
-            buffer.unpin(file_num | (i as u32));
-        }
-        for i in 128..256 {
-            dbg!(i);
-            match buffer.get_page(file_num | (i as u32), f) {
-                None => {
-                    panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                },
-                Some(_) => {}
-            }
+        let res = buffer.get_page(file_num, &f).unwrap();
+        let p = res;
+        unsafe {
+            (*res.as_ptr()).data[0] = 2;
+            (*p.as_ptr()).data[0] += 2;
+            println!("{}", (*p.as_ptr()).data[0]);
         }
     }
 }
