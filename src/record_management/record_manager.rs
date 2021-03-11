@@ -125,6 +125,22 @@ impl RecordManager {
     }
 
     /*
+     * Inserting a record takes a lot of work.
+     * When we need to insert a new record, if there is space
+     * in the last page, then we just insert a record in it.
+     * If not, we need to allocate a new page.
+     *
+     * The BufferManager is not able to allocate or delete a 
+     * page, therefore, we need to create a page_file struct
+     * to manage pages in files. Then we dont' directly ask 
+     * for a page from the buffer, we ask for a page from 
+     * the page file manager. And the manager has the buffer.
+     */
+    pub fn insert_record(&mut self, record: NonNull<Record>) {
+        
+    }
+
+    /*
      * Write a vector slice into a record data field.
      * With memory copying method.
      */

@@ -13,6 +13,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::FileExt;
 use std::ptr::NonNull;
 use std::fs::OpenOptions;
+use std::mem::size_of;
 
 use crate::errors::PageFileError;
 use super::page_file;
@@ -58,7 +59,7 @@ pub struct BufferPage {
 impl BufferPage {
     pub fn new() -> Self {
         BufferPage {
-            data: vec![0; 4096],
+            data: vec![0; page_file::PAGE_SIZE],
             next: -1,
             prev: -1,
             dirty: false,
@@ -129,6 +130,7 @@ impl Clone for BufferPage {
  *
  * It is important not to leave pages in memory unnecessarily.
  */
+#[derive(Debug, Clone)]
 pub struct BufferManager {
     buffer_table: Vec<NonNull<BufferPage>>, 
     num_pages: u32, //number of pages in the buffer pool, free pages not included.
@@ -162,7 +164,7 @@ impl BufferManager {
                 v
             },
             num_pages: 0,
-            page_size: 4096, //every page is 4KB.
+            page_size: page_file::PAGE_SIZE + size_of::<page_file::Page>(), //every page is 4KB data + it's data structure in file.
             first: -1,
             last: -1,
             free: 0,
@@ -196,7 +198,7 @@ impl BufferManager {
 
     fn read_page(&mut self, page_num: u32, fp: &File, index: usize) -> PageFileError {
         let location = (page_num & 0x0000ffff) as usize;
-        let offset = (location * self.page_size + page_file::PAGE_FILE_HEADER_SIZE) as u64;
+        let offset = (location * (self.page_size + size_of::<page_file::Page>()) + page_file::PAGE_FILE_HEADER_SIZE + size_of::<page_file::Page>()) as u64;
         if unsafe {(*self.buffer_table[index].as_ptr()).data.len()} < self.page_size {
             return PageFileError::DestShort;
         }

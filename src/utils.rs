@@ -1,13 +1,16 @@
 /**********************************************
-  > File Name		: lib.rs
+  > File Name		: utils.rs
   > Author		    : lunar
   > Email			: lunar_ubuntu@qq.com
-  > Created Time	: Tue 02 Mar 2021 07:50:50 PM CST
+  > Created Time	: Thu 11 Mar 2021 03:54:41 PM CST
   > Location        : Shanghai
   > Copyright@ https://github.com/xiaoqixian
  **********************************************/
 
-pub mod errors;
-pub mod page_management;
+/*
+ * Utils functions for global usage.
+ */
 
-//pub mod record_management;
+/*
+ * Write a data structure into a file.
+ */
