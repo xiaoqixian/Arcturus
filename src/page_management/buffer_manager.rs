@@ -88,7 +88,7 @@ impl BufferPage {
     }
 
     pub fn mark_dirty(&mut self) {
-        self.dirty = false;
+        self.dirty = true;
     }
 
     pub fn page_num(&self) -> u32 {

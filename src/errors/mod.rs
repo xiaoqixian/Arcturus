@@ -42,6 +42,6 @@ pub enum RecordError {
     NoFilePointer,
     InvalidPageNumber,
     InvalidSlotNumber,
-    ExternalMethodsFailure,
+    GetPageError,
     OffsetError,
 }

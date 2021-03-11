@@ -79,7 +79,7 @@ impl RecordManager {
         }
         let page_pointer = self.buffer.get_page(rid.page_num, &self.fp.as_ref().unwrap());
         if let None = page_pointer {
-            return Err(RecordError::ExternalMethodsFailure);
+            return Err(RecordError::GetPageError);
         }
         let page = unsafe {
             &mut (*page_pointer.unwrap().as_ptr())
@@ -96,12 +96,50 @@ impl RecordManager {
     }
 
     /*
+     * get_record doesn't necessarily modify the data of the record.
+     * but update_record definitely modify the data of the record.
+     * so we have to call the mark_dirty method inside.
+     */
+    pub fn update_record(&mut self, record: NonNull<Record>) -> Result<(), RecordError> {
+        if let None = self.fp {
+            return Err(RecordError::NoFilePointer);
+        }
+        let rec = unsafe {
+            record.as_ref()
+        };
+        let offset = self.get_record_offset(rec.rid.slot_num);
+        if offset > self.buffer.get_pagesize() {
+            return Err(RecordError::OffsetError);
+        }
+        let page_pointer = self.buffer.get_page(rec.rid.page_num, &self.fp.as_ref().unwrap());
+        if let None = page_pointer {
+            return Err(RecordError::GetPageError);
+        }
+        let page = unsafe {
+            &mut *page_pointer.unwrap().as_ptr()
+        };
+        self.write_page(record, &mut page.data[offset..]);
+        page.mark_dirty();
+        self.buffer.unpin(rec.rid.page_num);
+        Ok(())
+    }
+
+    /*
      * Write a vector slice into a record data field.
      * With memory copying method.
      */
     fn write_record(&self, record: &mut Box<Record>, data: &[u8]) {
         unsafe {
             std::ptr::copy(data.as_ptr(), record.data.as_mut_ptr(), self.record_size);
+        }
+    }
+
+    /*
+     * write a record data into the certain location of a page.
+     */
+    fn write_page(&self, record: NonNull<Record>, page_data: &mut [u8]) {
+        unsafe {
+            std::ptr::copy((*record.as_ptr()).data.as_ptr(), page_data.as_mut_ptr(), self.record_size);
         }
     }
 
