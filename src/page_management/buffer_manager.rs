@@ -11,7 +11,7 @@ use std::fs::File;
 use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::FileExt;
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::fs::OpenOptions;
 use std::mem::size_of;
 
@@ -47,7 +47,7 @@ extern crate env_logger;
 
 #[derive(Debug)]
 pub struct BufferPage {
-    pub data: Vec<u8>,
+    pub data: *mut u8,//data including page header, bitmap, and the records data.
     next: i32,
     prev: i32,
     dirty: bool,
@@ -57,9 +57,9 @@ pub struct BufferPage {
 }
 
 impl BufferPage {
-    pub fn new() -> Self {
+    pub fn new(page_size: usize) -> Self {
         BufferPage {
-            data: vec![0; page_file::PAGE_SIZE],
+            data: ptr::null();
             next: -1,
             prev: -1,
             dirty: false,
@@ -71,7 +71,7 @@ impl BufferPage {
 
     pub fn clone_metadata(&self) -> Self {
         BufferPage {
-            data: vec![0;0],
+            data: ptr::null(),
             next: self.next,
             prev: self.prev,
             dirty: self.dirty,
@@ -95,25 +95,19 @@ impl BufferPage {
     pub fn page_num(&self) -> u32 {
         self.page_num
     }
-}
 
-impl Clone for BufferPage {
-    fn clone(&self) -> Self {
-        BufferPage {
-            data: self.data.clone(),
-            next: self.next,
-            prev: self.prev,
-            dirty: self.dirty,
-            pin_count: self.pin_count,
-            page_num: self.page_num,
-            fp: {
-                match &self.fp {
-                    None => None,
-                    Some(v) => {
-                        Some(v.try_clone().unwrap())
-                    }
-                }
-            }
+    /*
+     * clean a page's header and bitmap.
+     * Normally a reset page will be linked in the free list of 
+     * page file manager, so the next_free parameter is 
+     * provided.
+     */
+    pub fn reset_page(&mut self, next_free: u32, bitmap_size: usize) -> Result<(), PageFileError> {
+        self.page_header.num_records = 0;
+        self.next_free = next_free;
+        let bits: Vec<u8> = vec![0; bitmap_size];
+        unsafe {
+            std::ptr::copy(bits.as_ptr(), )
         }
     }
 }
@@ -134,7 +128,7 @@ impl Clone for BufferPage {
 pub struct BufferManager {
     buffer_table: Vec<NonNull<BufferPage>>, 
     num_pages: u32, //number of pages in the buffer pool, free pages not included.
-    page_size: usize,
+    page_size: usize,//this page_size is the real page size, including page header, bitmap, and the data field. Will be provided when the buffer is created.
     first: i32, //most recently used page number.
     last: i32, //last recently used page number.
     /* page number of the first free page.
@@ -145,7 +139,7 @@ pub struct BufferManager {
 }
 
 impl BufferManager {
-    pub fn new() -> Self {
+    pub fn new(page_size: usize) -> Self {
         BufferManager {
             buffer_table: {
                 //let mut v = vec![NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap(); 128];
@@ -164,7 +158,7 @@ impl BufferManager {
                 v
             },
             num_pages: 0,
-            page_size: page_file::PAGE_SIZE + size_of::<page_file::Page>(), //every page is 4KB data + it's data structure in file.
+            page_size,
             first: -1,
             last: -1,
             free: 0,
@@ -196,30 +190,37 @@ impl BufferManager {
         self.free = start;
     }
 
+    fn get_page_offset(&self, index: usize) -> u64 {
+        (size_of::<PageFileHeader>() + index * self.page_size) as u64
+    }
+
+    /*
+     * read page header and data.
+     */
     fn read_page(&mut self, page_num: u32, fp: &File, index: usize) -> PageFileError {
-        let location = (page_num & 0x0000ffff) as usize;
-        let offset = (location * (self.page_size + size_of::<page_file::Page>()) + page_file::PAGE_FILE_HEADER_SIZE + size_of::<page_file::Page>()) as u64;
-        if unsafe {(*self.buffer_table[index].as_ptr()).data.len()} < self.page_size {
-            return PageFileError::DestShort;
+        let file_page_index = (page_num & 0x0000ffff) as usize;
+        let buffer_page = unsafe {
+            &mut *self.buffer_table[index].as_ptr()
+        };
+        
+        if buffer_page.data.is_null() {
+            buffer_page.data = vec![0; self.page_size].as_mut_ptr();
         }
-        /*
-         * read_at is a method of File only provided for unix 
-         * systems.
-         * we use it here for more convinient reading and writing.
-         */
-        let res = fp.read_at(unsafe {
-            (*self.buffer_table[index].as_ptr()).data.as_mut_slice()}, offset);
+
+        let sli = unsafe {
+            std::slice::from_raw_parts_mut(buffer_page.data, self.page_size)
+        };
+        let res = fp.read_at(sli, self.get_page_offset(file_page_index));
+
         if let Err(_) = res {
             return PageFileError::ReadAtError;
         }
+        
         let read_bytes = res.unwrap();
         if read_bytes < self.page_size {
-            unsafe {
-                //clear the page
-                std::ptr::write_bytes((*self.buffer_table[index].as_ptr()).data.as_mut_ptr(), 0x00, self.page_size);
-            }
             return PageFileError::IncompleteRead;
         }
+        
         PageFileError::Okay
     }
 
@@ -237,18 +238,31 @@ impl BufferManager {
      * possibility that there are more than 1<<16 pages in one file.
      * In this way, we can make sure each page number is identical.
      */
-    fn write_page(&self, page_num: u32, page_data: &Vec<u8>, fp: &File) -> PageFileError {
-        let location = (page_num & 0x0000ffff) as usize;
-        let offset = (location * self.page_size + page_file::PAGE_FILE_HEADER_SIZE) as u64;
-        let res = fp.write_at(page_data.as_slice(), offset);
+    fn write_page(&self, page_num: u32, fp: &File, index: usize) -> PageFileError {
+        let file_page_index = (page_num & 0x0000ffff) as usize;
+        let buffer_page = unsafe {
+            &mut *self.buffer_table[index].as_ptr()
+        };
+
+        if buffer_page.data.is_null() {
+            return PageFileError::DataUnintialized.
+        }
+
+        let sli = unsafe {
+            std::slice::from_raw_parts(buffer_page.data, self.page_size)
+        };
+        let res = fp.write_at(sli, self.get_page_offset(file_page_index));
+
         if let Err(v) = res {
             dbg!(v);
             return PageFileError::WriteAtError;
         }
+
         let write_bytes = res.unwrap();
         if write_bytes < self.page_size {
             return PageFileError::IncompleteWrite;
         }
+
         PageFileError::Okay
     }
 
@@ -278,7 +292,7 @@ impl BufferManager {
             if let None = &page.fp {
                 return PageFileError::NoFilePointer;
             }
-            let res = self.write_page(page.page_num, &page.data, &page.fp.as_ref().unwrap());
+            let res = self.write_page(page.page_num, &page.fp.as_ref().unwrap(), index);
             if let PageFileError::Okay = res {
 
             } else {
@@ -393,7 +407,7 @@ impl BufferManager {
         page.next = -1;
     }
 
-    pub fn get_page<'a>(&'a mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
+    pub fn get_page(&mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
         let cap = self.buffer_table.capacity();
         let index: usize = match self.page_table.get(&page_num) {
             None => cap,//index cannot be equal to or greater than the buffer_table capacity.

@@ -10,7 +10,7 @@
 /*
  * Define some erros enum for global usage.
  */
-
+#[derive(Debug)]
 pub enum PageFileError {
     Okay,
     NoMemory,
@@ -24,6 +24,7 @@ pub enum PageFileError {
     ReadAtError, //error of read_at method
     WriteAtError, 
     LostFilePointer, //returns when we need to use the file pointer of a page, but find it without any.
+    DataUnintialized, //returns when data field of BufferPage is null.
     OutOfIndex,
     //Internal errors.
     PageInBuf, //the new page is already in buf.
@@ -36,8 +37,11 @@ pub enum PageFileError {
     HashPageExist, //the new page is already in hashtable.
     InvalidName, //invalid file name
     Unix, //error in Unix system call or library routine.
+
+    GetPageError,//returned by PageFileManager, when get_page method occured error.
 }
 
+#[derive(Debug)]
 pub enum RecordError {
     NoFilePointer,
     InvalidPageNumber,
