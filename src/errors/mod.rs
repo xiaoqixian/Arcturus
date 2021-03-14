@@ -39,6 +39,7 @@ pub enum PageFileError {
     Unix, //error in Unix system call or library routine.
 
     GetPageError,//returned by PageFileManager, when get_page method occured error.
+    AllocatePageError,
 }
 
 #[derive(Debug)]

@@ -65,9 +65,9 @@ pub const PAGE_SIZE: usize = 4096;
  */
 #[derive(Debug, Clone, Copy)]
 pub struct PageHeader {
-    page_num: u32, //page number
-    num_records: usize, //number of records in the page.
-    next_free: u32, //next_free is the page_num of the next free page. All free pages are linked together by this.
+    pub page_num: u32, //page number
+    pub num_records: usize, //number of records in the page.
+    pub next_free: u32, //next_free is the page_num of the next free page. All free pages are linked together by this.
 }
 
 impl PageHeader {
@@ -181,66 +181,37 @@ impl PageFileManager {
              * any initialization. Cause the work was already 
              * done when the page was disposed.
              */
-            let page_num = ((self.file_header.file_num as u32) << 16) | (self.first_free as u32);
-            match self.buffer_manager.get_page(page_num, &self.fp) {
-                None => {
-                    return Err(PageFileError::GetPageError);
-                },
-                Some(v) => {
-                    let page = unsafe {
-                        &mut *v.as_ptr()
-                    };
-                    self.first_free = page.page_header.next_free;
-                    return Ok(v);
-                }
-            }
-        } else {
-            /*
-             * Allocate a new page, we have to write it into
-             * the file first before we read it into buffer.
-             */
-            let page_num = ((self.file_header.file_num as u32) << 16) | (self.file_header.num_pages as u32);
-            let new_header = PageHeader::new(page_num);
-            let bits: Vec<u8> = vec![0; self.file_header.bitmap_size + PAGE_SIZE];
-
-            unsafe {
-                let sli = std::slice::from_raw_parts(&new_header as *const _ as *const u8, size_of::<PageHeader>());
-                let mut res = self.fp.write_at(sli, Self::get_page_offset(self.file_header.num_pages, self.file_header.page_size));
-                match res {
-                    Err(e) => {
-                        dbg!(e);
-                        return Err(PageFileError::WriteAtError);
-                    },
-                    Ok(write_bytes) => {
-                        if write_bytes < size_of::<PageHeader>() {
-                            dbg!(write_bytes);
-                            return Err(PageFileError::IncompleteWrite);
-                        }
-                    }
-                }
-                res = self.fp.write_at(&bits.as_slice(), Self::get_bitmap_offset(self.file_header.num_pages, self.file_header.page_size));
-                match res {
-                    Err(e) => {
-                        dbg!(e);
-                        return Err(PageFileError::WriteAtError);
-                    },
-                    Ok(write_bytes) => {
-                        if write_bytes < self.file_header.bitmap_size + PAGE_SIZE {
-                            dbg!(write_bytes);
-                            return Err(PageFileError::IncompleteWrite);
-                        }
-                    }
-                }
-            }
-            match self.buffer_manager.get_page(page_num, &self.fp) {
+            match self.buffer_manager.get_page(self.first_free, &self.fp) {
                 None => {
                     Err(PageFileError::GetPageError)
                 },
                 Some(v) => {
+                    self.first_free = unsafe {
+                        v.as_ref().get_next_free()
+                    };
                     Ok(v)
                 }
             }
+        } else {
+            /* A new page first occurs in the buffer, and will
+             * not be written in file until it is freed and the
+             * buffer makes it to do so.
+             */
+            let page_num = self.get_page_num(self.file_header.num_pages);
+            let res = self.buffer_manager.allocate_page(page_num, &self.fp);
+            if let None = res {
+                return Err(PageFileError::AllocatePageError);
+            }
+            unsafe {
+                res.unwrap().as_mut().init_page_header(page_num);
+            }
+            self.file_header.num_pages += 1;
+            Ok(res.unwrap())
         }
+    }
+
+    fn get_page_num(&self, page_index: usize) -> u32 {
+        ((self.file_header.file_num as u32) << 16) | (page_index as u32)
     }
 
     /*
@@ -249,19 +220,6 @@ impl PageFileManager {
      * not be cleared. But its bitmap and header will be reset.
      */
     pub fn dispose_page(&mut self, page_num: u32) {
-        let res = self.buffer_manager.get_page(page_num, &self.fp);
-        if let None = res {
-            debug!("The page cannot be got");
-            dbg!(page_num);
-        }
-        let page = res.unwrap();
-        if page.next_free > 0 {
-            //means the page is not used.
-            debug!("The page is not used");
-            dbg!(page);
-            self.buffer_manager.unpin(page_num);
-            return ;
-        }
         
     }
 
