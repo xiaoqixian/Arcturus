@@ -210,18 +210,35 @@ impl PageFileManager {
         }
     }
 
+    /*
+     * Dispose a page.
+     * The disposed page will be linked and all its data will
+     * not be cleared.
+     */
+    pub fn dispose_page(&mut self, page_num: u32) -> Result<(), PageFileError> {
+        match self.buffer_manager.get_page(page_num, &self.fp) {
+            None => {
+                dbg!(page_num);
+                Err(PageFileError::GetPageError)
+            },
+            Some(mut v) => {
+                let page = unsafe {
+                    v.as_mut()
+                };
+                page.set_next_free(self.first_free);
+                self.first_free = page_num;
+                dbg!(&page);
+                page.mark_dirty();
+                self.buffer_manager.unpin(page_num);
+                Ok(())
+            }
+        }
+    }
+
     fn get_page_num(&self, page_index: usize) -> u32 {
         ((self.file_header.file_num as u32) << 16) | (page_index as u32)
     }
 
-    /*
-     * Dispose a page.
-     * The disposed page will be linked and all its data will
-     * not be cleared. But its bitmap and header will be reset.
-     */
-    pub fn dispose_page(&mut self, page_num: u32) {
-        
-    }
 
     fn get_page_offset(index: usize, page_size: usize) -> u64 {
         (size_of::<PageFileHeader>() + index*page_size) as u64

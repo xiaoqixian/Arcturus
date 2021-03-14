@@ -20,7 +20,7 @@ use super::page_file;
 use log::{*};
 extern crate env_logger;
 
-//use std::{println as info, println as debug, println as warn, println as error};
+use std::{println as info, println as debug, println as warn, println as error};
 /*
  * Memory and References.
  * Let me explain how I resolve memory passing between functions
@@ -150,18 +150,15 @@ impl BufferManager {
         BufferManager {
             buffer_table: {
                 //let mut v = vec![NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap(); 128];
-                let mut v = Vec::with_capacity(128);
-                for i in 0..128 {
-                    v.push(NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap());
+                let mut v: Vec<NonNull<BufferPage>> = Vec::with_capacity(128);
+                for i in 0..127 {
+                    let mut temp = Box::new(BufferPage::new());
+                    temp.next = i+1;
+                    v.push(NonNull::new(Box::into_raw(temp)).unwrap());
                 }
+                v.push(NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap());
                 //link all free pages
-                let len = v.len() as i32;
-                debug!("buffer initial length = {}", len);
-                for i in 0..(len-1) {
-                    unsafe {
-                        v[i as usize].as_mut().next = i+1;
-                    }
-                }
+                debug!("buffer initial length = {}", v.len());
                 v
             },
             num_pages: 0,
@@ -180,9 +177,16 @@ impl BufferManager {
     fn resize_buffer(&mut self) {
         let cap = self.buffer_table.capacity() as u32;
         if self.num_pages < cap {
+            debug!("No need to resize buffer");
             return ;
         }
-        self.buffer_table.resize((cap << 1) as usize, NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap());
+        dbg!((cap<<1) as usize);
+        let mut new_table: Vec<NonNull<BufferPage>> = Vec::with_capacity((cap<<1) as usize);
+        debug!("Not crashed yet.");
+        for i in 0..cap {
+            new_table[i as usize] = self.buffer_table[i as usize];
+        }
+        self.buffer_table = new_table;
         info!("Buffer pool new capacity: {}", self.buffer_table.capacity());
         //link all free pages.
         let start = cap as i32;
@@ -211,13 +215,17 @@ impl BufferManager {
         };
         
         if buffer_page.data.is_null() {
-            buffer_page.data = vec![0; self.page_size].as_mut_ptr();
+            //let mut temp: Box<Vec<u8>> = Box::new(vec![0; self.page_size]);
+            let mut temp: [u8; 5000] = [0; 5000];
+            buffer_page.data = temp.as_mut_ptr();
         }
+        debug!("page data allocated ");
 
         let sli = unsafe {
             std::slice::from_raw_parts_mut(buffer_page.data, self.page_size)
         };
         let res = fp.read_at(sli, self.get_page_offset(file_page_index));
+        dbg!(&res);
 
         if let Err(_) = res {
             return Err(PageFileError::ReadAtError);
@@ -368,6 +376,10 @@ impl BufferManager {
     /*
      * When a page is read from the buffer, we need to update
      * some data of the page and the buffer pool.
+     * If the page is already pinned, then increase pin count by
+     * 1 and return.
+     * If it is in the unused list, then unlink it from the 
+     * unused list.
      */
     fn update_page(&mut self, index: usize) {
         let pin_count: u32;
@@ -413,17 +425,25 @@ impl BufferManager {
     fn internal_alloc(&mut self) -> Result<usize, PageFileError> {
         if self.free == -1 {
             debug!("No free pages");
+            dbg!(&self.last);
             match self.free_page(self.last as usize) {
                 Ok(()) => {},
                 Err(PageFileError::NoPage) => {
+                    debug!("resizing buffer");
                     self.resize_buffer();
                 },
                 Err(e) => {
-                    return Err(e)
+                    return Err(e);
                 }
             }
         }
-        Ok(self.free as usize)
+        let temp = self.free as usize;
+        unsafe {
+            self.free = self.buffer_table[temp].as_mut().next;
+            dbg!(&self.free);
+        }
+        self.num_pages += 1;
+        Ok(temp)
     }
 
     pub fn get_page(&mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
@@ -440,6 +460,7 @@ impl BufferManager {
             debug!("Reading page with page_num={:#010x} from file.", page_num);
             
             let res = self.internal_alloc();
+            dbg!(&res);
             if let Err(v) = res {
                 dbg!(v);
                 return None;
@@ -464,11 +485,13 @@ impl BufferManager {
                     return None;
                 }
             }
+            debug!("read page succeed");
+
             self.page_table.insert(page_num, newpage_index);
-            self.num_pages += 1;
+            dbg!(&self.page_table);
+            debug!("I guess here");
             let new_page = unsafe {&mut *self.buffer_table[newpage_index].as_ptr()};
-            self.free = new_page.next;
-            debug!("self.free = {}", self.free);
+            debug!("read error");
             new_page.next = -1;
             new_page.pin_count = 1;
             new_page.page_num = page_num;
@@ -503,6 +526,9 @@ impl BufferManager {
         let page = unsafe {
             &mut *self.buffer_table[newpage_index].as_ptr()
         };
+        page.page_num = page_num;
+        page.fp = Some(fp.try_clone().unwrap());
+        page.pin_count = 1;
         Some(self.buffer_table[newpage_index])
     }
 
@@ -554,105 +580,4 @@ impl BufferManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    /*
-     * Test1:
-     * Read 129 pages, none of them get unpinned, see if the buffer
-     * will resized.
-     */
-//    #[test]
-    //fn buffer_manager_test1() {
-        //let mut buffer = BufferManager::new();
-        //let f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
-        //let file_num: u32 = 1<<16;
-        //for i in 0..129 {
-            //match buffer.get_page(file_num | (i as u32), &f) {
-                //None => {
-                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                //},
-                //Some(_) => {}
-            //}
-        //}
-    //}
 
-    /*
-     * Test2:
-     * Read 128 pages, make them dirty, unpin half of them, then read another 128 pages.
-     */
-    //#[test]
-    //fn buffer_manager_test2() {
-        //let mut buffer = BufferManager::new();
-        //let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
-        //let file_num: u32 = 1<<16;
-        //for i in 0..128 {
-            //match buffer.get_page(file_num | (i as u32), &f) {
-                //None => {
-                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                //},
-                //Some(v) => {
-                    //v.data[0] = 127;
-                    //v.dirty = true;
-                //}
-            //}
-        //}
-        //for i in 0..64 {
-            //debug!("unpin page_num={:#010x}", file_num | (i as u32));
-            //buffer.unpin(file_num | (i as u32));
-        //}
-        //for i in 0..32 {
-            //match buffer.get_page(file_num | (i as u32), &f) {
-                //None => {
-                    //panic!("read page_num={:#010x} failed");
-                //},
-                //Some(_) => {}
-            //}
-        //}
-        //for i in 128..256 {
-            //match buffer.get_page(file_num | (i as u32), &f) {
-                //None => {
-                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                //},
-                //Some(_) => {}
-            //}
-        //}
-    //}
-
-    /*
-     * BufferManager Test3
-     * Discontinously Read Pages.
-     */
-    //#[test]
-    //fn buffer_manager_test3() {
-        //let mut buffer = BufferManager::new();
-        //let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
-        //let file_num: u32 = 1<<16;
-        //for i in 0..65 {
-            //let page_num = file_num | (2*i as u32);
-            //match buffer.get_page(page_num, &f) {
-                //None => {
-                    //panic!("Reading page_num={:#010x} failed", page_num);
-                //},
-                //Some(v) => {
-                    
-                //}
-            //}
-        //}
-    //}
-
-    #[test]
-    fn buffer_manager_test4() {
-        let mut buffer = BufferManager::new();
-        let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
-        let file_num: u32 = 1<<16;
-        let res = buffer.get_page(file_num, &f).unwrap();
-        let p = res;
-        unsafe {
-            (*res.as_ptr()).data[0] = 2;
-            (*p.as_ptr()).data[0] += 2;
-            println!("{}", (*p.as_ptr()).data[0]);
-        }
-    }
-}
