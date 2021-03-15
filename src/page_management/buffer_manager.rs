@@ -14,6 +14,7 @@ use std::os::unix::fs::FileExt;
 use std::ptr::{self, NonNull};
 use std::fs::OpenOptions;
 use std::mem::size_of;
+use std::alloc::{self, Layout};
 
 use crate::errors::PageFileError;
 use super::page_file;
@@ -92,7 +93,7 @@ impl BufferPage {
         self.dirty = true;
     }
 
-    pub fn page_num(&self) -> u32 {
+    pub fn get_page_num(&self) -> u32 {
         self.page_num
     }
 
@@ -109,12 +110,11 @@ impl BufferPage {
     }
 
     pub fn init_page_header(&mut self, page_num: u32) {
-        let header = unsafe {
-            &mut *(self.data as *mut page_file::PageHeader)
-        };
-        header.page_num = page_num;
-        header.num_records = 0;
-        header.next_free = 0;
+        let header = page_file::PageHeader::new(page_num);
+        unsafe {
+            std::ptr::copy(&header as *const _ as *const u8, self.data, size_of::<page_file::PageHeader>());
+        }
+
         self.dirty = true;//at least the header is dirty.
     }
 }
@@ -184,7 +184,7 @@ impl BufferManager {
         let mut new_table: Vec<NonNull<BufferPage>> = Vec::with_capacity((cap<<1) as usize);
         debug!("Not crashed yet.");
         for i in 0..cap {
-            new_table[i as usize] = self.buffer_table[i as usize];
+            new_table.push(self.buffer_table[i as usize]);
         }
         self.buffer_table = new_table;
         info!("Buffer pool new capacity: {}", self.buffer_table.capacity());
@@ -194,11 +194,12 @@ impl BufferManager {
             unsafe {
                 let mut new_page = Box::new(BufferPage::new());
                 new_page.next = start+i+1;
-                self.buffer_table[(start+i) as usize] = NonNull::new(Box::into_raw(new_page)).unwrap();
+                self.buffer_table.push(NonNull::new(Box::into_raw(new_page)).unwrap());
             }
         }
-        self.buffer_table[((cap<<1) - 1) as usize] = NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap();
+        self.buffer_table.push(NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap());
         self.free = start;
+        debug!("new self.free = {}", self.free);
     }
 
     fn get_page_offset(&self, index: usize) -> u64 {
@@ -215,9 +216,7 @@ impl BufferManager {
         };
         
         if buffer_page.data.is_null() {
-            //let mut temp: Box<Vec<u8>> = Box::new(vec![0; self.page_size]);
-            let mut temp: [u8; 5000] = [0; 5000];
-            buffer_page.data = temp.as_mut_ptr();
+            buffer_page.data = Self::allocate_buffer(self.page_size);
         }
         debug!("page data allocated ");
 
@@ -225,7 +224,6 @@ impl BufferManager {
             std::slice::from_raw_parts_mut(buffer_page.data, self.page_size)
         };
         let res = fp.read_at(sli, self.get_page_offset(file_page_index));
-        dbg!(&res);
 
         if let Err(_) = res {
             return Err(PageFileError::ReadAtError);
@@ -366,6 +364,7 @@ impl BufferManager {
             }
         }
         self.first = index as i32;
+        debug!("self.first points to {}", index);
         if self.last == -1 {
             debug!("self.last points to {}", index);
             self.last = index as i32;
@@ -460,12 +459,12 @@ impl BufferManager {
             debug!("Reading page with page_num={:#010x} from file.", page_num);
             
             let res = self.internal_alloc();
-            dbg!(&res);
             if let Err(v) = res {
                 dbg!(v);
                 return None;
             }
             let newpage_index = res.unwrap();
+            dbg!(&newpage_index);
             match self.read_page(page_num, fp, newpage_index) {
                 Ok(()) => {},
                 Err(PageFileError::ReadAtError) => {
@@ -485,13 +484,9 @@ impl BufferManager {
                     return None;
                 }
             }
-            debug!("read page succeed");
 
             self.page_table.insert(page_num, newpage_index);
-            dbg!(&self.page_table);
-            debug!("I guess here");
             let new_page = unsafe {&mut *self.buffer_table[newpage_index].as_ptr()};
-            debug!("read error");
             new_page.next = -1;
             new_page.pin_count = 1;
             new_page.page_num = page_num;
@@ -529,6 +524,11 @@ impl BufferManager {
         page.page_num = page_num;
         page.fp = Some(fp.try_clone().unwrap());
         page.pin_count = 1;
+        
+        if page.data.is_null() {
+            page.data = Self::allocate_buffer(self.page_size);
+        }
+        debug!("returned");
         Some(self.buffer_table[newpage_index])
     }
 
@@ -577,6 +577,13 @@ impl BufferManager {
      */
     pub fn flush_pages(&self, fp: &File) {
         
+    }
+
+    pub fn allocate_buffer(size: usize) -> *mut u8 {
+        let layout = Layout::from_size_align(size, size_of::<u8>()).expect("create layout error");
+        unsafe {
+            alloc::alloc(layout)
+        }
     }
 }
 

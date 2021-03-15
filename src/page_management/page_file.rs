@@ -99,8 +99,20 @@ impl PageFileHeader {
             num_pages: 0,
             free: 0,
             record_size,
-            bitmap_size: PAGE_SIZE/record_size/8,
-            page_size: size_of::<PageHeader>() + PAGE_SIZE/record_size/8 + PAGE_SIZE
+            bitmap_size: {
+                if record_size == 0 {
+                    0
+                } else {
+                    PAGE_SIZE/record_size/8
+                }
+            },
+            page_size: {
+                if record_size == 0 {
+                    0
+                } else {
+                    size_of::<PageHeader>() + PAGE_SIZE/record_size/8 + PAGE_SIZE
+                }
+            }
         }
     }
 }
@@ -123,10 +135,8 @@ impl PageFileHeader {
  * the file. When next_free = 0, means there is no free page,
  * cause 0 is an invalid page number.
  */
-struct PageFileManager {
+pub struct PageFileManager {
     fp: File, //opend file pointer.
-    open_flag: bool, //file open flag.
-    changed_flag: bool, //mark if the file is changed.
     first_free: u32, //first free page.
     file_header: PageFileHeader,
     buffer_manager: BufferManager //the buffer manager and the page file manager are interrelated.
@@ -141,12 +151,14 @@ impl PageFileManager {
         let header = temp.unwrap();
         PageFileManager {
             fp: fp.try_clone().unwrap(),
-            open_flag: false,
-            changed_flag: false,
             first_free: header.free,
             file_header: header,
             buffer_manager: BufferManager::new(header.page_size)
         }
+    }
+
+    pub fn get_pagesize(&self) -> usize {
+        self.buffer_manager.get_pagesize()
     }
 
     fn read_header(fp: &File) -> Result<PageFileHeader, PageFileError> {
@@ -164,7 +176,9 @@ impl PageFileManager {
                 return Err(PageFileError::IncompleteRead);
             }
         }
-        Ok(pf_header)
+        //Ok(pf_header)
+        //TODO
+        Ok(PageFileHeader::new(1, 24))
     }
 
     /*
@@ -181,6 +195,7 @@ impl PageFileManager {
              * any initialization. Cause the work was already 
              * done when the page was disposed.
              */
+            debug!("Allocate a previously allocated page");
             match self.buffer_manager.get_page(self.first_free, &self.fp) {
                 None => {
                     Err(PageFileError::GetPageError)
@@ -197,6 +212,7 @@ impl PageFileManager {
              * not be written in file until it is freed and the
              * buffer makes it to do so.
              */
+            debug!("Allocate a new page");
             let page_num = self.get_page_num(self.file_header.num_pages);
             let res = self.buffer_manager.allocate_page(page_num, &self.fp);
             if let None = res {
@@ -235,12 +251,20 @@ impl PageFileManager {
         }
     }
 
+    pub fn get_page(&mut self, page_num: u32) -> Option<NonNull<BufferPage>> {
+        self.buffer_manager.get_page(page_num, &self.fp)
+    }
+
+    pub fn unpin_page(&mut self, page_num: u32) {
+        self.buffer_manager.unpin(page_num);
+    }
+
     fn get_page_num(&self, page_index: usize) -> u32 {
         ((self.file_header.file_num as u32) << 16) | (page_index as u32)
     }
 
 
-    fn get_page_offset(index: usize, page_size: usize) -> u64 {
+    pub fn get_page_offset(index: usize, page_size: usize) -> u64 {
         (size_of::<PageFileHeader>() + index*page_size) as u64
     }
 

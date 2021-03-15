@@ -16,32 +16,17 @@ mod tests {
     use super::page_file::*;
     use std::fs::File;
     use std::fs::OpenOptions;
-    /*
-     * Test1:
-     * Read 129 pages, none of them get unpinned, see if the buffer
-     * will resized.
-     */
-//    #[test]
-    //fn buffer_manager_test1() {
-        //let mut buffer = BufferManager::new();
-        //let f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
-        //let file_num: u32 = 1<<16;
-        //for i in 0..129 {
-            //match buffer.get_page(file_num | (i as u32), &f) {
-                //None => {
-                    //panic!("read page_num={:#010x} failed", file_num|(i as u32));
-                //},
-                //Some(_) => {}
-            //}
-        //}
-    //}
+
+    fn open() -> File {
+        OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap()
+    }
 
     /*
-     * Test2:
+     * Test1:
      * Read 128 pages, make them dirty, unpin half of them, then read another 128 pages.
      */
     #[test]
-    fn buffer_manager_test2() {
+    fn buffer_manager_test1() {
         let mut buffer = BufferManager::new(5000);
         let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
         let file_num: u32 = 1<<16;
@@ -55,7 +40,7 @@ mod tests {
                         &mut *v.as_ptr()
                     };
                     page.mark_dirty();
-                    dbg!(&page);
+                    //dbg!(&page);
                 }
             }
         }
@@ -82,30 +67,56 @@ mod tests {
         }
     }
 
-    /*
-     * BufferManager Test3
-     * Discontinously Read Pages.
-     */
-    //#[test]
-    //fn buffer_manager_test3() {
-        //let mut buffer = BufferManager::new();
-        //let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
-        //let file_num: u32 = 1<<16;
-        //for i in 0..65 {
-            //let page_num = file_num | (2*i as u32);
-            //match buffer.get_page(page_num, &f) {
-                //None => {
-                    //panic!("Reading page_num={:#010x} failed", page_num);
-                //},
-                //Some(v) => {
-                    
-                //}
-            //}
-        //}
-    //}
-    
-    fn open() -> File {
-        OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap()
-    }
+    #[test]
+    fn buffer_manager_test2() {
+        let mut buffer = BufferManager::new(5000);
+        let mut f = OpenOptions::new().read(true).write(true).open("/home/lunar/Documents/fzf").unwrap();
+        let file_num: u32 = 1<<16;
+        for i in 0..128 {
+            match buffer.get_page(file_num | (i as u32), &f) {
+                None => {
+                    panic!("read page_num={:#010x} failed", file_num|(i as u32));
+                },
+                Some(mut v) => {
+                    let page = unsafe {
+                        &mut *v.as_ptr()
+                    };
+                    page.mark_dirty();
+                    //dbg!(&page);
+                }
+            }
+        }
 
+        for i in 0..64 {
+            buffer.unpin(file_num | (i as u32));
+        }
+        for i in 0..32 {
+            match buffer.get_page(file_num | (i*2 as u32), &f) {
+                None => {
+                    panic!("read page_num={:#010x} failed");
+                },
+                Some(_) => {}
+            }
+        }
+    }
+   
+    /*
+     * Page File Unit Test1.
+     * 
+     */
+    #[test]
+    fn page_file_test1() {
+        let f = open();
+        let mut pf = crate::page_management::page_file::PageFileManager::new(&f);
+        let file_num: u32 = 1<<16;
+        for i in 0..128 {
+            let p = pf.allocate_page();
+            dbg!(&p);
+            if let Err(e) = p {
+                dbg!(&e);
+                panic!("get {}th page error", i);
+            }
+            pf.unpin_page(p.unwrap());
+        }
+    }
 }

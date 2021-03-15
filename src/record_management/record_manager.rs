@@ -19,6 +19,7 @@
  * the same size. Although record sizes may differ across files. 
  */
 
+use crate::page_management::page_file::*;
 use crate::page_management::buffer_manager::*;
 use crate::errors::RecordError;
 use super::file_manager::FileHeader;
@@ -39,7 +40,7 @@ struct RID {
 struct Record {
     record_size: usize,
     rid: RID,
-    data: Vec<u8>
+    data: *mut u8
 }
 
 impl Record {
@@ -47,8 +48,16 @@ impl Record {
         Record {
             record_size,
             rid,
-            data: vec![0; record_size]
+            data: BufferManager::allocate_buffer(record_size)
         }
+    }
+
+    fn get_page_num(&self) -> u32 {
+        self.rid.page_num
+    }
+
+    fn get_slot_num(&self) -> u32 {
+        self.rid.slot_num
     }
 }
 
@@ -57,18 +66,22 @@ impl Record {
  * from a page.
  */
 struct RecordManager {
-    buffer: BufferManager,
+    page_file_manager: PageFileManager,
     fp: Option<File>,
-    header: FileHeader,
     record_size: usize
 }
 
+/*
+ * When we create a new manager to manage records.
+ * Either we create a new DB file to represent a 
+ * table, or open an old file. Both ways request 
+ * us to pass in a reference of File.
+ */
 impl RecordManager {
-    pub fn new(record_size: usize) -> Self {
+    pub fn new(fp: &File, record_size: usize) -> Self {
         RecordManager {
-            buffer: BufferManager::new(),
-            fp: None,
-            header: FileHeader::new(),
+            page_file_manager: PageFileManager::new(fp),
+            fp: Some(fp.try_clone().unwrap()),
             record_size,
         }
     }
@@ -77,21 +90,24 @@ impl RecordManager {
         if let None = self.fp {
             return Err(RecordError::NoFilePointer);
         }
-        let page_pointer = self.buffer.get_page(rid.page_num, &self.fp.as_ref().unwrap());
+        let page_pointer = self.page_file_manager.get_page(rid.page_num);
         if let None = page_pointer {
             return Err(RecordError::GetPageError);
         }
         let page = unsafe {
-            &mut (*page_pointer.unwrap().as_ptr())
+            &mut *page_pointer.unwrap().as_ptr()
         };
         let offset = self.get_record_offset(rid.slot_num);
-        if offset > self.buffer.get_pagesize() {
+        if offset > self.page_file_manager.get_pagesize() {
             return Err(RecordError::OffsetError);
         }
+        if offset % self.record_size != 0 {
+            return Err(RecordError::MismatchRecordOffset);
+        }
         let mut res = Box::new(Record::new(self.record_size, *rid));
-        self.write_record(&mut res, &page.data[offset..]);
+        self.write_record(&mut res, page);
 
-        self.buffer.unpin(rid.page_num);//important.
+        self.page_file_manager.unpin_page(rid.page_num);//important.
         Ok(NonNull::new(Box::into_raw(res)).unwrap())
     }
 
@@ -108,19 +124,25 @@ impl RecordManager {
             record.as_ref()
         };
         let offset = self.get_record_offset(rec.rid.slot_num);
-        if offset > self.buffer.get_pagesize() {
+        if offset > self.page_file_manager.get_pagesize() {
             return Err(RecordError::OffsetError);
         }
-        let page_pointer = self.buffer.get_page(rec.rid.page_num, &self.fp.as_ref().unwrap());
+        let page_pointer = self.page_file_manager.get_page(rec.rid.page_num);
         if let None = page_pointer {
             return Err(RecordError::GetPageError);
         }
         let page = unsafe {
             &mut *page_pointer.unwrap().as_ptr()
         };
-        self.write_page(record, &mut page.data[offset..]);
+        match self.write_page(record, page) {
+            Err(e) => {
+                dbg!(e);
+                panic!("write page error");
+            },
+            Ok(()) => {}
+        }
         page.mark_dirty();
-        self.buffer.unpin(rec.rid.page_num);
+        self.page_file_manager.unpin_page(rec.rid.page_num);
         Ok(())
     }
 
@@ -141,27 +163,38 @@ impl RecordManager {
     }
 
     /*
-     * Write a vector slice into a record data field.
+     * Copy the memory of a record from a page to a Record struct.
      * With memory copying method.
      */
-    fn write_record(&self, record: &mut Box<Record>, data: &[u8]) {
+    fn write_record(&self, record: &mut Box<Record>, page: &mut BufferPage) {
         unsafe {
-            std::ptr::copy(data.as_ptr(), record.data.as_mut_ptr(), self.record_size);
+            let record_offset = self.get_record_offset(record.get_slot_num());
+            let record_slot = unsafe {
+                page.data.offset(record_offset as isize)
+            };
+            std::ptr::copy(record_slot, record.data, self.record_size);
         }
     }
 
     /*
      * write a record data into the certain location of a page.
      */
-    fn write_page(&self, record: NonNull<Record>, page_data: &mut [u8]) {
-        unsafe {
-            std::ptr::copy((*record.as_ptr()).data.as_ptr(), page_data.as_mut_ptr(), self.record_size);
+    fn write_page(&self, record_p: NonNull<Record>, page: &mut BufferPage) -> Result<(), RecordError> {
+        let record = unsafe {
+            &mut *record_p.as_ptr()
+        };
+        if record.data.is_null() || page.data.is_null() {
+            return Err(RecordError::NullPointerError);
         }
+        let record_offset = self.get_record_offset(record.get_slot_num());
+        
+        unsafe {
+            std::ptr::copy(record.data, page.data.offset(record_offset as isize), self.record_size);
+        }
+        Ok(())
     }
 
     fn get_record_offset(&self, slot_num: u32) -> usize {
-        let record_size = self.record_size;
-        let record_offset = std::mem::size_of::<FileHeader>() + (slot_num as usize) * record_size;
-        record_offset
+        std::mem::size_of::<PageHeader>() + (slot_num as usize) * self.record_size
     }
 }

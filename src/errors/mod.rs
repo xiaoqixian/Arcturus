@@ -49,4 +49,6 @@ pub enum RecordError {
     InvalidSlotNumber,
     GetPageError,
     OffsetError,
+    NullPointerError,
+    MismatchRecordOffset,//returns when offset is not integer multiple of page size.
 }
