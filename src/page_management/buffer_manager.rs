@@ -117,6 +117,10 @@ impl BufferPage {
 
         self.dirty = true;//at least the header is dirty.
     }
+
+    /*
+     * Page Operations
+     */
 }
 
 /*

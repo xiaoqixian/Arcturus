@@ -92,6 +92,14 @@ pub struct PageFileHeader {
 }
 
 impl PageFileHeader {
+    fn calc_bitmap_size(record_size: usize) -> usize {
+        let bitmap_size: usize = PAGE_SIZE/record_size/8;
+        if PAGE_SIZE/record_size % 8 != 0 {
+            bitmap_size += 1;
+        }
+        bitmap_size
+    }
+
     pub fn new(file_num: u16, record_size: usize) -> Self {
         PageFileHeader {
             file_num,
@@ -103,14 +111,14 @@ impl PageFileHeader {
                 if record_size == 0 {
                     0
                 } else {
-                    PAGE_SIZE/record_size/8
+                    calc_bitmap_size(record_size)
                 }
             },
             page_size: {
                 if record_size == 0 {
                     0
                 } else {
-                    size_of::<PageHeader>() + PAGE_SIZE/record_size/8 + PAGE_SIZE
+                    size_of::<PageHeader>() + calc_bitmap_size(record_size) + PAGE_SIZE
                 }
             }
         }
@@ -159,6 +167,14 @@ impl PageFileManager {
 
     pub fn get_pagesize(&self) -> usize {
         self.buffer_manager.get_pagesize()
+    }
+    
+    pub fn get_first_free(&self) -> u32 {
+        self.first_free
+    }
+
+    pub fn get_bitmap_size(&self) -> usize {
+        self.file_header.bitmap_size
     }
 
     fn read_header(fp: &File) -> Result<PageFileHeader, PageFileError> {
@@ -262,7 +278,6 @@ impl PageFileManager {
     fn get_page_num(&self, page_index: usize) -> u32 {
         ((self.file_header.file_num as u32) << 16) | (page_index as u32)
     }
-
 
     pub fn get_page_offset(index: usize, page_size: usize) -> u64 {
         (size_of::<PageFileHeader>() + index*page_size) as u64

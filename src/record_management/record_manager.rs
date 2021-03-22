@@ -43,12 +43,36 @@ struct Record {
     data: *mut u8
 }
 
+impl Clone for Record {
+    fn clone(&self) -> Self {
+        Record {
+            record_size: self.record_size,
+            rid: self.rid,
+            data: {
+                let p = BufferManager::allocate_buffer(self.record_size);
+                unsafe {
+                    std::ptr::copy(self.data, p, self.record_size);
+                }
+                p
+            }
+        }
+    }
+}
+
 impl Record {
     fn new(record_size: usize, rid: RID) -> Self {
         Record {
             record_size,
             rid,
             data: BufferManager::allocate_buffer(record_size)
+        }
+    }
+
+    fn new_with_data(record_size: usize, rid: RID, data: *mut u8) -> Self {
+        Record {
+            record_size,
+            rid,
+            data,
         }
     }
 
@@ -152,14 +176,32 @@ impl RecordManager {
      * in the last page, then we just insert a record in it.
      * If not, we need to allocate a new page.
      *
-     * The BufferManager is not able to allocate or delete a 
-     * page, therefore, we need to create a page_file struct
-     * to manage pages in files. Then we dont' directly ask 
-     * for a page from the buffer, we ask for a page from 
-     * the page file manager. And the manager has the buffer.
+     * The rid also need to be allocated, after allocation, the 
+     * rid is returned.
      */
-    pub fn insert_record(&mut self, record: NonNull<Record>) {
+    pub fn insert_record(&mut self, data: *mut u8) -> Result<RID, RecordError> {
+        let mut page_num = self.page_file_manager.get_first_free();
+        let page: &mut BufferPage;
+        if page_num == 0 {
+            let res = self.page_file_manager.allocate_page();
+            if let Err(e) = res {
+                return Err(e);
+            }
+            page = unsafe {
+                res.unwrap().as_mut()
+            };
+        } else {
+            let res = self.page_file_manager.get_page(page_num, &self.fp);
+            if let Err(e) = res {
+                return Err(e);
+            }
+            page = unsafe {
+                res.unwrap().as_mut();
+            }
+        }
+        page_num = page.get_page_num();
         
+        let rec = Record::new_with_data(self.record_size, )
     }
 
     /*
@@ -192,6 +234,24 @@ impl RecordManager {
             std::ptr::copy(record.data, page.data.offset(record_offset as isize), self.record_size);
         }
         Ok(())
+    }
+
+    /*
+     * Get a free slot of a page, normally we call this method for
+     * inserting a record, so we directly set the corresponding bit
+     * in the bitmap.
+     */
+    fn get_free_slot(&self, page: &BufferPage) -> u32 {
+        let page_index = (page.get_page_num() & 0x0000ffff) as usize;
+        let bitmap_offset = page_file::PageFileManager::get_bitmap_offset(page_index, self.page_file_manager.get_pagesize()) as isize;
+        let bitmap = unsafe {
+            page.data.offset(bitmap_offset)
+        };
+        let bitmap_size = self.page_file_manager.get_bitmap_size();
+        let sli = unsafe {
+            std::slice::from_raw_parts_mut(bitmap, bitmap_size)
+        };
+        
     }
 
     fn get_record_offset(&self, slot_num: u32) -> usize {
