@@ -124,22 +124,19 @@ impl RecordManager {
         if let None = self.fp {
             return Err(RecordError::NoFilePointer);
         }
+        let mut res = Box::new(Record::new(self.record_size, *rid));
         let page_pointer = self.page_file_manager.get_page(rid.page_num);
         if let None = page_pointer {
+            //when the None is returned, the specific page is not pinned, so no need to
+            //unpin the page.
             return Err(RecordError::GetPageError);
         }
         let page = unsafe {
             &mut *page_pointer.unwrap().as_ptr()
         };
-        let offset = self.get_record_offset(rid.slot_num);
-        if offset > self.page_file_manager.get_pagesize() {
-            return Err(RecordError::OffsetError);
+        if let Err(e) = self.write_record(&mut res, page) {
+            return Err(e);
         }
-        if offset % self.record_size != 0 {
-            return Err(RecordError::MismatchRecordOffset);
-        }
-        let mut res = Box::new(Record::new(self.record_size, *rid));
-        self.write_record(&mut res, page);
 
         self.page_file_manager.unpin_page(rid.page_num);//important.
         Ok(NonNull::new(Box::into_raw(res)).unwrap())
@@ -157,10 +154,7 @@ impl RecordManager {
         let rec = unsafe {
             record.as_ref()
         };
-        let offset = self.get_record_offset(rec.rid.slot_num);
-        if offset > self.page_file_manager.get_pagesize() {
-            return Err(RecordError::OffsetError);
-        }
+
         let page_pointer = self.page_file_manager.get_page(rec.rid.page_num);
         if let None = page_pointer {
             return Err(RecordError::GetPageError);
@@ -175,8 +169,8 @@ impl RecordManager {
             },
             Ok(()) => {}
         }
-        page.mark_dirty();
-        self.page_file_manager.unpin_page(rec.rid.page_num);
+        page.mark_dirty();//important
+        self.page_file_manager.unpin_page(rec.get_page_num());//important
         Ok(())
     }
 
@@ -213,7 +207,7 @@ impl RecordManager {
         page_num = page.get_page_num();
         let res = self.get_free_slot(page);
         let slot_num: u32;
-        if let Err(PageFull) = res {
+        if let Err(RecordError::PageFull) = res {
             self.page_file_manager.unpin_page(page_num);
             let res = self.page_file_manager.allocate_page();
             if let Err(e) = res {
@@ -229,14 +223,16 @@ impl RecordManager {
         }
         let rid = RID::new(page_num, slot_num);
         //copy data into page.
-        let records_offset = (self.page_file_manager.get_pagesize() - PAGE_SIZE + (slot_num as usize) * self.record_size) as isize;
-        dbg!(&records_offset);
-        let records_ptr = unsafe {
-            page.data.offset(records_offset)
+        let record_offset = self.get_record_offset(rid.slot_num).expect("Get Record Offset Error");
+        dbg!(&record_offset);
+        let record_ptr = unsafe {
+            page.data.offset(record_offset as isize)
         };
         unsafe {
-            std::ptr::copy(data, records_ptr, self.page_file_manager.get_pagesize());
+            std::ptr::copy(data, record_ptr, self.record_size);
         }
+        page.mark_dirty();
+        self.page_file_manager.unpin_page(page_num);
         Ok(rid)
     }
 
@@ -266,6 +262,8 @@ impl RecordManager {
         dbg!(&sli[index]);
         sli[index] ^= temp;
         dbg!(&sli[index]);
+        page.mark_dirty();
+        self.page_file_manager.unpin_page(page_num);
         Ok(())
     }
 
@@ -273,14 +271,20 @@ impl RecordManager {
      * Copy the memory of a record from a page to a Record struct.
      * With memory copying method.
      */
-    fn write_record(&self, record: &mut Box<Record>, page: &mut BufferPage) {
+    fn write_record(&self, record: &mut Box<Record>, page: &mut BufferPage) -> Result<(), RecordError> {
         unsafe {
-            let record_offset = self.get_record_offset(record.get_slot_num());
+            let res = self.get_record_offset(record.get_slot_num());
+            if let Err(e) = res {
+                dbg!(&e);
+                return Err(e);
+            }
+            let record_offset = res.unwrap();
             let record_slot = unsafe {
                 page.data.offset(record_offset as isize)
             };
             std::ptr::copy(record_slot, record.data, self.record_size);
         }
+        Ok(())
     }
 
     /*
@@ -293,7 +297,11 @@ impl RecordManager {
         if record.data.is_null() || page.data.is_null() {
             return Err(RecordError::NullPointerError);
         }
-        let record_offset = self.get_record_offset(record.get_slot_num());
+        let res = self.get_record_offset(record.get_slot_num());
+        if let Err(e) = res {
+            return Err(e);
+        }
+        let record_offset = res.unwrap();
         
         unsafe {
             std::ptr::copy(record.data, page.data.offset(record_offset as isize), self.record_size);
@@ -341,7 +349,11 @@ impl RecordManager {
         Ok(res as u32)
     }
 
-    fn get_record_offset(&self, slot_num: u32) -> usize {
-        std::mem::size_of::<PageHeader>() + (slot_num as usize) * self.record_size
+    fn get_record_offset(&self, slot_num: u32) -> Result<usize, RecordError> {
+        let offset = std::mem::size_of::<PageHeader>() + (slot_num as usize) * self.record_size;
+        if offset > self.page_file_manager.get_pagesize() {
+            return Err(RecordError::OffsetError);
+        }
+        Ok(offset)
     }
 }

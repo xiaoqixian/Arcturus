@@ -7,6 +7,23 @@
   > Copyright@ https://github.com/xiaoqixian
  **********************************************/
 
+/*
+ * File Manager.
+ * Client for table creating, table opening, table closing, etc.
+ * As each file represents a table.
+ * FileManager maintains a hashmap which contains all file pointers 
+ * of opend tables. Key: file name, Value: file pointer.
+ */
+
+use std::collections::HashMap;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::mem::size_of;
+use std::{println as info, println as debug, println as warn, println as error};
+use std::os::unix::fs::FileExt;
+
+use crate::page_management::page_file::PageFileHeader;
+
 pub struct FileHeader {
     num_pages: usize,
 }
@@ -16,5 +33,44 @@ impl FileHeader {
         FileHeader {
             num_pages: 0
         }
+    }
+}
+
+pub struct FileManager {
+    num_files: u32,
+    fps: HashMap<String, File>
+}
+
+impl FileManager {
+    pub fn new() -> Self {
+        Self {
+            num_files: 0,
+            fps: HashMap::new()
+        }
+    }
+
+    pub fn create_file(&mut self, file_name: String, record_size: usize) {
+        if let Some(_) = self.fps.get(&file_name) {
+            debug!("Table already exists");
+            return ;
+        }
+        let fp = OpenOptions::new().read(true).write(true).create(true).open(&file_name).expect("Create file error");
+        //write in file header.
+        self.num_files += 1;
+        let page_file_header = PageFileHeader::new(self.num_files as u16, record_size);
+        let sli = unsafe {
+            std::slice::from_raw_parts(&page_file_header as *const _ as *const u8, size_of::<PageFileHeader>())
+        };
+        let write_bytes = fp.write_at(sli, size_of::<PageFileHeader>() as u64).expect("Write File Header Error");
+        if write_bytes < size_of::<PageFileHeader>() {
+            debug!("Write File Header Error");
+            return ;
+        }
+        self.fps.insert(file_name.clone(), fp.try_clone().unwrap());
+    }
+
+    pub fn open_file(&mut self, file_name: String) {
+        let fp = File::open(&file_name).expect("Open file error");
+        self.fps.insert(file_name.clone(), fp.try_clone().unwrap());
     }
 }
