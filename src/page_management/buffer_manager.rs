@@ -121,6 +121,7 @@ impl BufferPage {
     /*
      * Page Operations
      */
+
 }
 
 /*
@@ -195,11 +196,9 @@ impl BufferManager {
         //link all free pages.
         let start = cap as i32;
         for i in 0..(start-1) {
-            unsafe {
-                let mut new_page = Box::new(BufferPage::new());
-                new_page.next = start+i+1;
-                self.buffer_table.push(NonNull::new(Box::into_raw(new_page)).unwrap());
-            }
+            let mut new_page = Box::new(BufferPage::new());
+            new_page.next = start+i+1;
+            self.buffer_table.push(NonNull::new(Box::into_raw(new_page)).unwrap());
         }
         self.buffer_table.push(NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap());
         self.free = start;

@@ -93,7 +93,7 @@ pub struct PageFileHeader {
 
 impl PageFileHeader {
     fn calc_bitmap_size(record_size: usize) -> usize {
-        let bitmap_size: usize = PAGE_SIZE/record_size/8;
+        let mut bitmap_size: usize = PAGE_SIZE/record_size/8;
         if PAGE_SIZE/record_size % 8 != 0 {
             bitmap_size += 1;
         }
@@ -111,14 +111,14 @@ impl PageFileHeader {
                 if record_size == 0 {
                     0
                 } else {
-                    calc_bitmap_size(record_size)
+                    Self::calc_bitmap_size(record_size)
                 }
             },
             page_size: {
                 if record_size == 0 {
                     0
                 } else {
-                    size_of::<PageHeader>() + calc_bitmap_size(record_size) + PAGE_SIZE
+                    size_of::<PageHeader>() + Self::calc_bitmap_size(record_size) + PAGE_SIZE
                 }
             }
         }

@@ -25,6 +25,7 @@ use crate::errors::RecordError;
 use super::file_manager::FileHeader;
 use std::fs::File;
 use std::ptr::NonNull;
+use std::mem::size_of;
 
 /*
  * We plan to represent a table using at lease one file.
@@ -36,7 +37,16 @@ struct RID {
     slot_num: u32 //slot_num represents the location of a record in a page.
 }
 
-#[derive(Debug, Clone)]
+impl RID {
+    pub fn new(page_num: u32, slot_num: u32) -> Self {
+        RID {
+            page_num,
+            slot_num
+        }
+    }
+}
+
+#[derive(Debug)]
 struct Record {
     record_size: usize,
     rid: RID,
@@ -181,27 +191,82 @@ impl RecordManager {
      */
     pub fn insert_record(&mut self, data: *mut u8) -> Result<RID, RecordError> {
         let mut page_num = self.page_file_manager.get_first_free();
-        let page: &mut BufferPage;
+        let mut page: &mut BufferPage;
         if page_num == 0 {
             let res = self.page_file_manager.allocate_page();
             if let Err(e) = res {
-                return Err(e);
+                dbg!(&e);
+                return Err(RecordError::AllocatePageError);
             }
             page = unsafe {
-                res.unwrap().as_mut()
+                &mut *res.unwrap().as_ptr()
             };
         } else {
-            let res = self.page_file_manager.get_page(page_num, &self.fp);
-            if let Err(e) = res {
-                return Err(e);
+            let res = self.page_file_manager.get_page(page_num);
+            if let None = res {
+                return Err(RecordError::GetPageError);
             }
             page = unsafe {
-                res.unwrap().as_mut();
-            }
+                &mut *res.unwrap().as_ptr()
+            };
         }
         page_num = page.get_page_num();
-        
-        let rec = Record::new_with_data(self.record_size, )
+        let res = self.get_free_slot(page);
+        let slot_num: u32;
+        if let Err(PageFull) = res {
+            self.page_file_manager.unpin_page(page_num);
+            let res = self.page_file_manager.allocate_page();
+            if let Err(e) = res {
+                dbg!(&e);
+                return Err(RecordError::AllocatePageError);
+            }
+            page = unsafe {
+                &mut *res.unwrap().as_ptr()
+            };
+            slot_num = self.get_free_slot(page).expect("Get free slot error after a new page is allocated.");
+        } else {
+            slot_num = res.unwrap();
+        }
+        let rid = RID::new(page_num, slot_num);
+        //copy data into page.
+        let records_offset = (self.page_file_manager.get_pagesize() - PAGE_SIZE + (slot_num as usize) * self.record_size) as isize;
+        dbg!(&records_offset);
+        let records_ptr = unsafe {
+            page.data.offset(records_offset)
+        };
+        unsafe {
+            std::ptr::copy(data, records_ptr, self.page_file_manager.get_pagesize());
+        }
+        Ok(rid)
+    }
+
+    /*
+     * Delete a record.
+     */
+    pub fn delete_record(&mut self, rid: RID) -> Result<(), RecordError> {
+        let page_num = rid.page_num;
+        let slot_num = rid.slot_num;
+        let res = self.page_file_manager.get_page(page_num);
+        if let None = res {
+            return Err(RecordError::GetPageError);
+        }
+        let page = unsafe {
+            &mut *res.unwrap().as_ptr()
+        };
+        let bitmap_offset = size_of::<PageHeader>() as isize;
+        let index = (slot_num / 8) as usize;
+        let offset = slot_num % 8;
+        let sli = unsafe {
+            std::slice::from_raw_parts_mut(page.data.offset(bitmap_offset), self.page_file_manager.get_bitmap_size())
+        };
+        let temp = 1<<(7-offset);
+        if sli[index] & temp == 0 {
+            return Err(RecordError::RecordDeleted);
+        }
+        dbg!(&sli[index]);
+        sli[index] ^= temp;
+        dbg!(&sli[index]);
+        Ok(())
     }
 
     /*
@@ -241,9 +306,8 @@ impl RecordManager {
      * inserting a record, so we directly set the corresponding bit
      * in the bitmap.
      */
-    fn get_free_slot(&self, page: &BufferPage) -> u32 {
-        let page_index = (page.get_page_num() & 0x0000ffff) as usize;
-        let bitmap_offset = page_file::PageFileManager::get_bitmap_offset(page_index, self.page_file_manager.get_pagesize()) as isize;
+    fn get_free_slot(&self, page: &BufferPage) -> Result<u32, RecordError> {
+        let bitmap_offset = size_of::<PageHeader> as isize;
         let bitmap = unsafe {
             page.data.offset(bitmap_offset)
         };
@@ -251,7 +315,30 @@ impl RecordManager {
         let sli = unsafe {
             std::slice::from_raw_parts_mut(bitmap, bitmap_size)
         };
-        
+        let mut index: usize = 0xffffffff;
+        for i in 0..(bitmap_size as usize) {
+            if sli[i] < 0xff {
+                index = i;
+            }
+        }
+        if index == 0xffffffff {
+            return Err(RecordError::PageFull);
+        }
+        let mut temp = sli[index];
+        dbg!(&index);
+        dbg!(&sli[index]);
+        let mut res: usize = index * 8;
+        for i in 0..(8 as usize) {
+            if temp & 0x80 == 0 {
+                dbg!(&i);
+                res += i;
+                let s = 1<<(7-i);
+                sli[index] &= s;
+                dbg!(&sli[index]);
+            }
+            temp <<= 1;
+        }
+        Ok(res as u32)
     }
 
     fn get_record_offset(&self, slot_num: u32) -> usize {
