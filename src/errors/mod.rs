@@ -54,4 +54,7 @@ pub enum RecordError {
     PageFull,//returns when there is no free slot in the page, not an error actually. Just tell the caller that the page is full.
     RecordDeleted,//returns when the record is already deleted. Usually detected when the bitmap is unset.
     AllocatePageError,//returns when calling to the allocate_page method failed.
+    IncompleteWrite,
+    FileExist,
+    FileOpenError,//may because file does not exist.
 }

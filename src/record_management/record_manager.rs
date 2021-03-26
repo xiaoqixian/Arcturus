@@ -22,7 +22,6 @@
 use crate::page_management::page_file::*;
 use crate::page_management::buffer_manager::*;
 use crate::errors::RecordError;
-use super::file_manager::FileHeader;
 use std::fs::File;
 use std::ptr::NonNull;
 use std::mem::size_of;
@@ -32,7 +31,7 @@ use std::mem::size_of;
  */
 
 #[derive(Debug, Copy, Clone)]
-struct RID {
+pub struct RID {
     page_num: u32,
     slot_num: u32 //slot_num represents the location of a record in a page.
 }
@@ -47,7 +46,7 @@ impl RID {
 }
 
 #[derive(Debug)]
-struct Record {
+pub struct Record {
     record_size: usize,
     rid: RID,
     data: *mut u8
@@ -99,8 +98,8 @@ impl Record {
  * RecordManager is in charge of inserting, deleting, getting a record 
  * from a page.
  */
-struct RecordManager {
-    page_file_manager: PageFileManager,
+pub struct RecordManager {
+    pub page_file_manager: PageFileManager,
     fp: Option<File>,
     record_size: usize
 }
@@ -113,6 +112,7 @@ struct RecordManager {
  */
 impl RecordManager {
     pub fn new(fp: &File, record_size: usize) -> Self {
+        println!("Initializing Record Manager");
         RecordManager {
             page_file_manager: PageFileManager::new(fp),
             fp: Some(fp.try_clone().unwrap()),
@@ -184,9 +184,11 @@ impl RecordManager {
      * rid is returned.
      */
     pub fn insert_record(&mut self, data: *mut u8) -> Result<RID, RecordError> {
+        println!("Inserting a record");
         let mut page_num = self.page_file_manager.get_first_free();
         let mut page: &mut BufferPage;
         if page_num == 0 {
+            println!("Need to allocate a new page.");
             let res = self.page_file_manager.allocate_page();
             if let Err(e) = res {
                 dbg!(&e);
@@ -221,6 +223,7 @@ impl RecordManager {
         } else {
             slot_num = res.unwrap();
         }
+        dbg!(&slot_num);
         let rid = RID::new(page_num, slot_num);
         //copy data into page.
         let record_offset = self.get_record_offset(rid.slot_num).expect("Get Record Offset Error");
@@ -279,9 +282,7 @@ impl RecordManager {
                 return Err(e);
             }
             let record_offset = res.unwrap();
-            let record_slot = unsafe {
-                page.data.offset(record_offset as isize)
-            };
+            let record_slot = page.data.offset(record_offset as isize);
             std::ptr::copy(record_slot, record.data, self.record_size);
         }
         Ok(())
@@ -314,8 +315,10 @@ impl RecordManager {
      * inserting a record, so we directly set the corresponding bit
      * in the bitmap.
      */
-    fn get_free_slot(&self, page: &BufferPage) -> Result<u32, RecordError> {
-        let bitmap_offset = size_of::<PageHeader> as isize;
+    pub fn get_free_slot_(&self, page: &BufferPage) -> Result<u32, RecordError> {
+        let bitmap_offset = size_of::<PageHeader>() as isize;
+        dbg!(&bitmap_offset);
+        dbg!(size_of::<PageHeader>());
         let bitmap = unsafe {
             page.data.offset(bitmap_offset)
         };
@@ -323,10 +326,27 @@ impl RecordManager {
         let sli = unsafe {
             std::slice::from_raw_parts_mut(bitmap, bitmap_size)
         };
+        println!("{:?}", sli);
+        Ok(32)
+    }
+
+    pub fn get_free_slot(&self, page: &BufferPage) -> Result<u32, RecordError> {
+        let bitmap_offset = size_of::<PageHeader>() as isize;
+        dbg!(&bitmap_offset);
+        let bitmap = unsafe {
+            page.data.offset(bitmap_offset)
+        };
+        dbg!(&bitmap);
+        let bitmap_size = self.page_file_manager.get_bitmap_size();
+        let sli = unsafe {
+            std::slice::from_raw_parts_mut(bitmap, bitmap_size)
+        };
+        println!("{:?}", &sli);
         let mut index: usize = 0xffffffff;
         for i in 0..(bitmap_size as usize) {
             if sli[i] < 0xff {
                 index = i;
+                break;
             }
         }
         if index == 0xffffffff {
@@ -337,20 +357,23 @@ impl RecordManager {
         dbg!(&sli[index]);
         let mut res: usize = index * 8;
         for i in 0..(8 as usize) {
+            dbg!(&temp);
             if temp & 0x80 == 0 {
                 dbg!(&i);
                 res += i;
                 let s = 1<<(7-i);
-                sli[index] &= s;
+                sli[index] |= s;
                 dbg!(&sli[index]);
+                break;
             }
             temp <<= 1;
         }
+        println!("{:?}", &sli);
         Ok(res as u32)
     }
 
-    fn get_record_offset(&self, slot_num: u32) -> Result<usize, RecordError> {
-        let offset = std::mem::size_of::<PageHeader>() + (slot_num as usize) * self.record_size;
+    pub fn get_record_offset(&self, slot_num: u32) -> Result<usize, RecordError> {
+        let offset = std::mem::size_of::<PageHeader>() + self.page_file_manager.get_bitmap_size() + (slot_num as usize) * self.record_size;
         if offset > self.page_file_manager.get_pagesize() {
             return Err(RecordError::OffsetError);
         }

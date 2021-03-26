@@ -83,7 +83,6 @@ impl PageHeader {
 #[derive(Debug, Clone, Copy)]
 pub struct PageFileHeader {
     file_num: u16,
-    first_free_page: u32, //the number of the first free page.
     num_pages: usize, //number of pages.
     free: u32, //page number of next free page, if equals to 0, there is no free page.
     record_size: usize,
@@ -103,7 +102,6 @@ impl PageFileHeader {
     pub fn new(file_num: u16, record_size: usize) -> Self {
         PageFileHeader {
             file_num,
-            first_free_page: 0,
             num_pages: 0,
             free: 0,
             record_size,
@@ -143,6 +141,7 @@ impl PageFileHeader {
  * the file. When next_free = 0, means there is no free page,
  * cause 0 is an invalid page number.
  */
+#[derive(Debug)]
 pub struct PageFileManager {
     fp: File, //opend file pointer.
     first_free: u32, //first free page.
@@ -152,11 +151,13 @@ pub struct PageFileManager {
 
 impl PageFileManager {
     pub fn new(fp: &File) -> Self {
+        println!("Initializing Page File Manager");
         let temp = Self::read_header(fp);
         if let Err(_) = temp {
             panic!("read header error");
         }
         let header = temp.unwrap();
+        dbg!(&header);
         PageFileManager {
             fp: fp.try_clone().unwrap(),
             first_free: header.free,
@@ -188,13 +189,11 @@ impl PageFileManager {
             }
             let read_bytes = res.unwrap();
             if read_bytes < size_of::<PageFileHeader>() {
-                dbg!("read_bytes");
+                dbg!(read_bytes);
                 return Err(PageFileError::IncompleteRead);
             }
         }
-        //Ok(pf_header)
-        //TODO
-        Ok(PageFileHeader::new(1, 24))
+        Ok(pf_header)
     }
 
     /*
@@ -238,6 +237,7 @@ impl PageFileManager {
                 res.unwrap().as_mut().init_page_header(page_num);
             }
             self.file_header.num_pages += 1;
+            self.first_free = page_num;
             Ok(res.unwrap())
         }
     }

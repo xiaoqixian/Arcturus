@@ -9,19 +9,15 @@
 
 use std::fs::File;
 use std::collections::HashMap;
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::FileExt;
 use std::ptr::{self, NonNull};
-use std::fs::OpenOptions;
 use std::mem::size_of;
 use std::alloc::{self, Layout};
 
 use crate::errors::PageFileError;
 use super::page_file;
-use log::{*};
-extern crate env_logger;
 
-use std::{println as info, println as debug, println as warn, println as error};
+use std::{println as debug, println as info, println as error};
 /*
  * Memory and References.
  * Let me explain how I resolve memory passing between functions
@@ -136,7 +132,7 @@ impl BufferPage {
  *
  * It is important not to leave pages in memory unnecessarily.
  */
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BufferManager {
     buffer_table: Vec<NonNull<BufferPage>>, 
     num_pages: u32, //number of pages in the buffer pool, free pages not included.
@@ -150,8 +146,23 @@ pub struct BufferManager {
     page_table: HashMap<u32, usize> //we need this table to get a page quickly.
 }
 
+impl std::fmt::Debug for BufferManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferManager")
+            .field("buffer_table: with length", &self.buffer_table.len())
+            .field("num_pages", &self.num_pages)
+            .field("page_size", &self.page_size)
+            .field("first", &self.first)
+            .field("last", &self.last)
+            .field("free", &self.free)
+            .field("page_table", &self.page_table)
+            .finish()
+    }
+}
+
 impl BufferManager {
     pub fn new(page_size: usize) -> Self {
+        println!("Initializing Buffer Manager.");
         BufferManager {
             buffer_table: {
                 //let mut v = vec![NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap(); 128];
@@ -339,7 +350,6 @@ impl BufferManager {
         let page = unsafe {
             & *self.buffer_table[index].as_ptr()
         };
-        let int_index = index as i32;
         if page.prev == -1 {
             self.first = page.next;
         } else {
@@ -527,6 +537,7 @@ impl BufferManager {
         page.page_num = page_num;
         page.fp = Some(fp.try_clone().unwrap());
         page.pin_count = 1;
+        page.next = -1;
         
         if page.data.is_null() {
             page.data = Self::allocate_buffer(self.page_size);
@@ -578,6 +589,7 @@ impl BufferManager {
      * By referencing the same_file crate, comparing the metadata of 
      * a file can be an appropriate method.
      */
+    #[warn(unused_variables)]
     pub fn flush_pages(&self, fp: &File) {
         
     }

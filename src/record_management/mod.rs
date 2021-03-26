@@ -9,3 +9,6 @@
 
 pub mod file_manager;
 pub mod record_manager;
+
+#[cfg(test)]
+mod tests;

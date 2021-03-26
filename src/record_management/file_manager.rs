@@ -23,18 +23,7 @@ use std::{println as info, println as debug, println as warn, println as error};
 use std::os::unix::fs::FileExt;
 
 use crate::page_management::page_file::PageFileHeader;
-
-pub struct FileHeader {
-    num_pages: usize,
-}
-
-impl FileHeader {
-    pub fn new() -> Self {
-        FileHeader {
-            num_pages: 0
-        }
-    }
-}
+use crate::errors::RecordError;
 
 pub struct FileManager {
     num_files: u32,
@@ -49,28 +38,43 @@ impl FileManager {
         }
     }
 
-    pub fn create_file(&mut self, file_name: String, record_size: usize) {
-        if let Some(_) = self.fps.get(&file_name) {
+    pub fn create_file(&mut self, file_name: &String, record_size: usize) -> Result<File, RecordError> {
+        if let Some(_) = self.fps.get(file_name) {
             debug!("Table already exists");
-            return ;
+            return Err(RecordError::FileExist);
         }
-        let fp = OpenOptions::new().read(true).write(true).create(true).open(&file_name).expect("Create file error");
+        let fp = OpenOptions::new().read(true).write(true).create(true).open(file_name).expect("Create file error");
+
         //write in file header.
         self.num_files += 1;
         let page_file_header = PageFileHeader::new(self.num_files as u16, record_size);
+        dbg!(&page_file_header);
         let sli = unsafe {
             std::slice::from_raw_parts(&page_file_header as *const _ as *const u8, size_of::<PageFileHeader>())
         };
+
         let write_bytes = fp.write_at(sli, size_of::<PageFileHeader>() as u64).expect("Write File Header Error");
         if write_bytes < size_of::<PageFileHeader>() {
             debug!("Write File Header Error");
-            return ;
+            return Err(RecordError::IncompleteWrite);
         }
+
         self.fps.insert(file_name.clone(), fp.try_clone().unwrap());
+        Ok(fp.try_clone().unwrap())
     }
 
-    pub fn open_file(&mut self, file_name: String) {
-        let fp = File::open(&file_name).expect("Open file error");
+    pub fn open_file(&mut self, file_name: &String) -> Result<File, RecordError> {
+        if let Some(v) = self.fps.get(file_name) {
+            return Ok(v.try_clone().unwrap());
+        }
+        let fp = match File::open(file_name) {
+            Err(e) => {
+                dbg!(&e);
+                return Err(RecordError::FileOpenError);
+            },
+            Ok(v) => v
+        };
         self.fps.insert(file_name.clone(), fp.try_clone().unwrap());
+        Ok(fp.try_clone().unwrap())
     }
 }
