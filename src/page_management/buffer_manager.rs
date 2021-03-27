@@ -45,6 +45,7 @@ use std::{println as debug, println as info, println as error};
 #[derive(Debug)]
 pub struct BufferPage {
     pub data: *mut u8,//data including page header, bitmap, and the records data.
+    //header: page_file::PageHeader,//header read from data, for more convnient operation on page header.
     next: i32,
     prev: i32,
     dirty: bool,
@@ -105,6 +106,24 @@ impl BufferPage {
         }
     }
 
+    pub fn get_num_records(&self) -> usize {
+        unsafe {
+            (*(self.data as *const page_file::PageHeader)).num_records
+        }
+    }
+
+    pub fn add_num_records(&mut self) {
+        unsafe {
+            (*(self.data as *mut page_file::PageHeader)).num_records += 1;
+        }
+    }
+
+    pub fn dec_num_records(&mut self) {
+        unsafe {
+            (*(self.data as *mut page_file::PageHeader)).num_records -= 1;
+        }
+    }
+
     pub fn init_page_header(&mut self, page_num: u32) {
         let header = page_file::PageHeader::new(page_num);
         unsafe {
@@ -112,6 +131,12 @@ impl BufferPage {
         }
 
         self.dirty = true;//at least the header is dirty.
+    }
+
+    pub fn dbg_header(&self) {
+        unsafe {
+            dbg!(&(*(self.data as *const page_file::PageHeader)));
+        }
     }
 
     /*

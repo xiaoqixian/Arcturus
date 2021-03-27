@@ -53,11 +53,13 @@ impl FileManager {
             std::slice::from_raw_parts(&page_file_header as *const _ as *const u8, size_of::<PageFileHeader>())
         };
 
-        let write_bytes = fp.write_at(sli, size_of::<PageFileHeader>() as u64).expect("Write File Header Error");
+        let write_bytes = fp.write_at(sli, 0).expect("Write File Header Error");
         if write_bytes < size_of::<PageFileHeader>() {
             debug!("Write File Header Error");
             return Err(RecordError::IncompleteWrite);
         }
+
+        dbg!(&write_bytes);
 
         self.fps.insert(file_name.clone(), fp.try_clone().unwrap());
         Ok(fp.try_clone().unwrap())

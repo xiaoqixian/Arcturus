@@ -66,10 +66,13 @@ fn record_manager_test1() {
     //let offset = rm.get_record_offset(slot_num).expect("record offset error");
     //dbg!(&offset);
 
-    for i in 0..128 {
+    use crate::record_management::record_manager::RID;
+    let mut recs: Vec<RID> = Vec::new();
+    for i in 0..40 {
         match rm.insert_record(data) {
             Ok(v) => {
                 dbg!(v);
+                recs.push(v);
             },
             Err(e) => {
                 dbg!(e);
@@ -77,5 +80,42 @@ fn record_manager_test1() {
             }
         }
     }
+    println!("\n--------Deleting Records------------\n");
+    let mut index = 0;
+    for rec in &recs {
+        if index > 5 {break;}
+        dbg!(&rec);
+        rm.delete_record(*rec).expect(format!("delete record {:?}  error", rec).as_str());
+        index += 1;
+    }
+
+    for i in 0..3 {
+        match rm.insert_record(data) {
+            Ok(v) => {
+                dbg!(v);
+                recs.push(v);
+            },
+            Err(e) => {
+                dbg!(e);
+                panic!(format!("Insert {}th record error!", i));
+            }
+        }
+    }
+    
+    rm.delete_record(recs[39]).expect(format!("delete record {:?} error", recs[39]).as_str());
+    for i in 0..1 {
+        match rm.insert_record(data) {
+            Ok(v) => {
+                dbg!(v);
+                recs.push(v);
+            },
+            Err(e) => {
+                dbg!(e);
+                panic!(format!("Insert {}th record error!", i));
+            }
+        }
+    }
+   
+
     std::fs::remove_file("~/pros/arcturus/Table1");
 }

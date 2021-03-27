@@ -210,6 +210,7 @@ impl RecordManager {
         let res = self.get_free_slot(page);
         let slot_num: u32;
         if let Err(RecordError::PageFull) = res {
+            println!("");
             self.page_file_manager.unpin_page(page_num);
             let res = self.page_file_manager.allocate_page();
             if let Err(e) = res {
@@ -219,6 +220,7 @@ impl RecordManager {
             page = unsafe {
                 &mut *res.unwrap().as_ptr()
             };
+            page_num = page.get_page_num();
             slot_num = self.get_free_slot(page).expect("Get free slot error after a new page is allocated.");
         } else {
             slot_num = res.unwrap();
@@ -235,7 +237,9 @@ impl RecordManager {
             std::ptr::copy(data, record_ptr, self.record_size);
         }
         page.mark_dirty();
-        self.page_file_manager.unpin_page(page_num);
+        page.add_num_records();
+        page.dbg_header();
+        self.page_file_manager.unpin_page(page.get_page_num());
         Ok(rid)
     }
 
@@ -245,6 +249,7 @@ impl RecordManager {
     pub fn delete_record(&mut self, rid: RID) -> Result<(), RecordError> {
         let page_num = rid.page_num;
         let slot_num = rid.slot_num;
+        dbg!(&page_num);
         let res = self.page_file_manager.get_page(page_num);
         if let None = res {
             return Err(RecordError::GetPageError);
@@ -265,6 +270,9 @@ impl RecordManager {
         dbg!(&sli[index]);
         sli[index] ^= temp;
         dbg!(&sli[index]);
+        page.dec_num_records();
+        //now the page is definitely not full, we need to link it to the available page list.
+        self.page_file_manager.link_page(page);
         page.mark_dirty();
         self.page_file_manager.unpin_page(page_num);
         Ok(())

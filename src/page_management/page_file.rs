@@ -88,6 +88,7 @@ pub struct PageFileHeader {
     record_size: usize,
     bitmap_size: usize,
     page_size: usize,
+    records_perpage: usize //capacity of a page containing records, we need this to determine if a page is full.
 }
 
 impl PageFileHeader {
@@ -117,6 +118,13 @@ impl PageFileHeader {
                     0
                 } else {
                     size_of::<PageHeader>() + Self::calc_bitmap_size(record_size) + PAGE_SIZE
+                }
+            },
+            records_perpage: {
+                if record_size == 0 {
+                    0
+                } else {
+                    PAGE_SIZE/record_size
                 }
             }
         }
@@ -153,7 +161,8 @@ impl PageFileManager {
     pub fn new(fp: &File) -> Self {
         println!("Initializing Page File Manager");
         let temp = Self::read_header(fp);
-        if let Err(_) = temp {
+        if let Err(e) = temp {
+            dbg!(e);
             panic!("read header error");
         }
         let header = temp.unwrap();
@@ -182,7 +191,7 @@ impl PageFileManager {
         let mut pf_header = PageFileHeader::new(0, 0);
         unsafe {
             let slice_header = std::slice::from_raw_parts_mut(&mut pf_header as *mut _ as *mut u8, size_of::<PageFileHeader>());
-            let res = fp.read_at(slice_header, size_of::<PageFileHeader>() as u64);
+            let res = fp.read_at(slice_header, 0);
             if let Err(_) = res {
                 dbg!(res);
                 return Err(PageFileError::ReadAtError);
@@ -202,8 +211,12 @@ impl PageFileManager {
      * After allocation, the page is read into buffer if it
      * is not in the buffer, and the BufferPage pointer is 
      * returned.
+     *
+     * Method only called when the page that self.first_free points 
+     * to is full. 
      */
     pub fn allocate_page(&mut self) -> Result<NonNull<BufferPage>, PageFileError> {
+        let mut page_num: u32 = 0;
         if self.first_free > 0 {
             /*
              * For a previously allocated page, we don't need
@@ -213,33 +226,39 @@ impl PageFileManager {
             debug!("Allocate a previously allocated page");
             match self.buffer_manager.get_page(self.first_free, &self.fp) {
                 None => {
-                    Err(PageFileError::GetPageError)
+                    return Err(PageFileError::GetPageError);
                 },
                 Some(v) => {
-                    self.first_free = unsafe {
-                        v.as_ref().get_next_free()
+                    let page = unsafe {
+                        v.as_ref()
                     };
-                    Ok(v)
+                    self.first_free = page.get_next_free();
+                    page_num = self.first_free;
+                    self.buffer_manager.unpin(page.get_page_num());
                 }
             }
-        } else {
+        }
+
+        if page_num == 0 {
             /* A new page first occurs in the buffer, and will
              * not be written in file until it is freed and the
              * buffer makes it to do so.
              */
             debug!("Allocate a new page");
-            let page_num = self.get_page_num(self.file_header.num_pages);
-            let res = self.buffer_manager.allocate_page(page_num, &self.fp);
-            if let None = res {
-                return Err(PageFileError::AllocatePageError);
-            }
-            unsafe {
-                res.unwrap().as_mut().init_page_header(page_num);
-            }
-            self.file_header.num_pages += 1;
+            page_num = self.get_page_num(self.file_header.num_pages);
             self.first_free = page_num;
-            Ok(res.unwrap())
         }
+        dbg!(&page_num);
+
+        let res = self.buffer_manager.allocate_page(page_num, &self.fp);
+        if let None = res {
+            return Err(PageFileError::AllocatePageError);
+        }
+        unsafe {
+            res.unwrap().as_mut().init_page_header(page_num);
+        }
+        self.file_header.num_pages += 1;
+        Ok(res.unwrap())
     }
 
     /*
@@ -289,5 +308,10 @@ impl PageFileManager {
 
     fn get_data_offset(index: usize, page_size: usize) -> u64 {
         Self::get_page_offset(index, page_size) + ((page_size - PAGE_SIZE) as u64)
+    }
+
+    pub fn link_page(&mut self, page: &mut BufferPage) {
+        page.set_next_free(self.first_free);
+        self.first_free = page.get_page_num();
     }
 }
