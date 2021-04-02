@@ -58,3 +58,12 @@ pub enum RecordError {
     FileExist,
     FileOpenError,//may because file does not exist.
 }
+
+#[derive(Debug)]
+pub enum IndexingError {
+    CreateFileError,
+    InvalidAttr,
+    IncompleteWrite,
+    IncompleteRead,
+    FileExist,
+}

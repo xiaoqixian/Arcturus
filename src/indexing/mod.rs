@@ -28,3 +28,5 @@ enum AttrType {
     FLOAT,
     STRING
 }
+
+pub mod file_manager;

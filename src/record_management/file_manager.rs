@@ -26,14 +26,24 @@ use crate::page_management::page_file::PageFileHeader;
 use crate::errors::RecordError;
 
 pub struct FileManager {
-    num_files: u32,
+    num_files: u16,
     fps: HashMap<String, File>
 }
 
 impl FileManager {
-    pub fn new() -> Self {
+    /*
+     * As num_files is used to determine the file name, so it matters
+     * very much.
+     * So we will have whole database manager, to store whole these 
+     * data, like number of records files and indexing files.
+     * You will see this again in indexing module.
+     *
+     * When the FileManager closes, such variables will be returned back
+     * for database manager updating.
+     */
+    pub fn new(num_files: u16) -> Self {
         Self {
-            num_files: 0,
+            num_files,
             fps: HashMap::new()
         }
     }
@@ -47,7 +57,7 @@ impl FileManager {
 
         //write in file header.
         self.num_files += 1;
-        let page_file_header = PageFileHeader::new(self.num_files as u16, record_size);
+        let page_file_header = PageFileHeader::new(self.num_files, record_size);
         dbg!(&page_file_header);
         let sli = unsafe {
             std::slice::from_raw_parts(&page_file_header as *const _ as *const u8, size_of::<PageFileHeader>())
