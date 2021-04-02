@@ -23,7 +23,7 @@
 static MAX_STRING_LEN: usize = 255;
 
 #[derive(Debug, Copy, Clone)]
-enum AttrType {
+pub enum AttrType {
     INT,
     FLOAT,
     STRING

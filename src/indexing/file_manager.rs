@@ -20,7 +20,7 @@ use std::mem::size_of;
 use super::AttrType;
 use crate::errors::IndexingError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct IndexFileManager {
     num_files: u16,
     fps: HashMap<String, File>
@@ -75,21 +75,21 @@ impl IndexFileManager {
             return Ok(v.try_clone().unwrap());
         }
         let f = OpenOptions::new().read(true).write(true).open(file_name).expect("Open Index File Error");
-        self.fps.insert(file_name, f.try_clone.unwrap());
-        Ok(f.try_clone.unwrap())
+        self.fps.insert(file_name.clone(), f.try_clone().unwrap());
+        Ok(f.try_clone().unwrap())
     }
 
     fn check_attr_validity(attr_type: AttrType, attr_length: usize) -> bool {
         match attr_type {
-            INT|FLOAT => {
+            AttrType::INT | AttrType::FLOAT => {
                 if attr_length == 4 {
                     true
                 } else {
                     false
                 }
             },
-            STRING => {
-                if attr_length <= MAX_STRING_LEN {
+            AttrType::STRING => {
+                if attr_length <= super::MAX_STRING_LEN {
                     true
                 } else {
                     false
