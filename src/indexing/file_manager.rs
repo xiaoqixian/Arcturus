@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use super::AttrType;
 use crate::errors::IndexingError;
+use std::io::ErrorKind;
 
 #[derive(Debug)]
 pub struct IndexFileManager {
@@ -34,10 +35,12 @@ impl IndexFileManager {
         }
     }
     /*
+     * open a file, if the file not found, create one.
+     *
      * index_num is for helping create the name of the index file, in 
      * case of duplicate names.
      */
-    pub fn create_file(&mut self, file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
+    pub fn open_file(&mut self, file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
         if let Some(_) = self.fps.get(file_name) {
             return Err(IndexingError::FileExist);
         }
@@ -48,34 +51,36 @@ impl IndexFileManager {
 
         let mut new_name = file_name.clone();
         new_name.push_str(&index_num.to_string());
-        let res = OpenOptions::new().read(true).write(true).create(true).open(&new_name);
-        if let Err(e) = res {
-            dbg!(e);
-            return Err(IndexingError::CreateFileError);
+        
+        let mut fp: File;
+        match File::open(&new_name) {
+            Ok(v) => {
+                fp = v.try_clone().unwrap();
+            },
+            Err(e) => match e.kind() {
+                ErrorKind::NotFound => {
+                    fp = OpenOptions::new().read(true).write(true).create(true).open(&new_name).expect("Create File Error");
+                },
+                other_error => {
+                    dbg!(&other_error);
+                    panic!(true);
+                }
+            }
         }
-        let f = res.unwrap();
         
         self.num_files += 1;
-        self.fps.insert(new_name.clone(), f.try_clone().unwrap());
+        self.fps.insert(new_name.clone(), fp.try_clone().unwrap());
 
         //write in page file header.
         let pfh = PageFileHeader::new(self.num_files, attr_length);
         let sli = unsafe {
             std::slice::from_raw_parts(&pfh as *const _ as *const u8, size_of::<PageFileHeader>())
         };
-        let write_bytes = f.write_at(sli, 0).expect("Unix Write Error");
+        let write_bytes = fp.write_at(sli, 0).expect("Unix Write Error");
         if write_bytes < size_of::<PageFileHeader>() {
+            dbg!(&write_bytes);
             return Err(IndexingError::IncompleteWrite);
         }
-        Ok(f.try_clone().unwrap())
-    }
-
-    pub fn open_file(&mut self, file_name: &String) -> Result<File, IndexingError> {
-        if let Some(v) = self.fps.get(file_name) {
-            return Ok(v.try_clone().unwrap());
-        }
-        let f = OpenOptions::new().read(true).write(true).open(file_name).expect("Open Index File Error");
-        self.fps.insert(file_name.clone(), f.try_clone().unwrap());
         Ok(f.try_clone().unwrap())
     }
 
