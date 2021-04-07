@@ -40,13 +40,89 @@
  * link all pages together.
  * 
  * Page/Node layout:
- *     1. header: store data of the page
+ *     1. header: store data of the page, including RID associated with the index.
  *     2. entries: array of all entries metadata.
- *     3. attributes data
+ *     3. keys
  *
- * Node Insertion:
+ * Entry Insertion:
+ *  parameters:
+ *    data,
+ *    RID associated with the index.
+ *  steps:
+ *    1. retrieve the root header
+ *    2. if the root is full, create a new root node. And split the previous root
+ *       node, make the new root node their parent node.
  * 
  * Insert Into a Non Full Node:
- *  check if it's a leaf node or an internal node:
- *      1. If it's a leaf node, directly intert into it.
+ *  parameters:
+ *      1. Header of the node that we need to insert into.
+ *      2. data to be inserted.
+ *  steps:
+ *    check if it's a leaf node or an internal node:
+ *      1. If it's a leaf node, directly intert into it. All insertion details have 
+ *         been metioned above.
+ *      2. If it's an internal node, first find an appropriate location or should I
+ *         say a page index. Then check if the page is full, if it's full, we need to
+ *         split the node. I will elaborate how to split a node below.
+ *         After split, we recursively call this method except the first parameter is 
+ *         the new node.
+ *
+ * Node Split:
+ *  parameters:
+ *    1. Header of the parent node.
+ *    2. old header: the header of the full node to split.
+ *    3. old page num: the page num of the full node to split.
+ *    4. index: the index into which to insert the new node into the parent node.
+ *    5. new key index: the index of the first key that points to the new node.
+ *    6. new page num: page num of the new node.
+ *  steps:
+ *    If it's an interna node:
+ *      1. move half of max number of entries to the new node.
+ *         Including entries data and attribute data.
+ *      2. insert parent key into parent at index specified in parameters.
+ *         Then we just need to copy the key at the index
+ *         to parent node. Corresponding entries are updated too.
+ *      3. And if it's a leaf node, new node and old node have to be linked together.
+ * 
+ * DeleteFromLeaf:
+ *   parameters:
+ *     1. node header
+ *     2. data
+ *     3. RID reference associated with the index
+ *     4. toDelete: a bool reference, set true if the node become empty after deletion.
+ *   steps:
+ *     1. find the appropriate index, check if it's a duplicate entry.
+ *        If it's duplicate, delete from the corresponding bucket.
+ *        Else, just delete it from entries and keys.
+ *
+ * DeleteFromBucket:
+ *   parameters:
+ *     1. bucket header
+ *    returns:
+ *     1. RID signifying the last RID remaining
+ *     2. next bucket page num that this bucket points to.
+ *   steps:
+ *     1. check if this bucket has a next bucket, if so, search first in the next
+ *        bucket(recursively calls this method).
+ *     2. If this is the last bucket, search in all entries and check for an entry 
+ *        that page num and slot num match RID.
+ *        If this bucket has 1 or less key left, then just delete it.
+ *     3. If this is not the last bucket, after our search in the next buckets. If
+ *        the deletePage sign is set, and there is 1 or less key left in the next 
+ *        bucket, the next bucket is deleted.
+ *
+ * DeleteFromNode:
+ *   A recursive function.
+ *   parameters:
+ *     1.  
+ *
+ * Entry Deletion:
+ *  Let me make this clear, we only delete one entry at a time, and the entry is 
+ *  identified by a RID provided. Delete all entries that have a same index value
+ *  part is in the IndexScan module.
+ *  parameters:
+ *    data,
+ *    RID associated with the index.
+ *  steps:
+ *    
  */
