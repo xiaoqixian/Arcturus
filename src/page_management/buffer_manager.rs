@@ -14,7 +14,7 @@ use std::ptr::{self, NonNull};
 use std::mem::size_of;
 use std::alloc::{self, Layout};
 
-use crate::errors::PageFileError;
+use crate::errors::Error::{Self, PageFileError};
 use super::page_file;
 
 use std::{println as debug, println as info, println as error};
@@ -146,8 +146,17 @@ impl BufferPage {
 }
 
 /*
+ * As the page_file module has multiple clients in the project. 
+ * So it has be low coupling.
+ *
+ * Data in every page includes a header(points to the next free page) and it's data.
+ * The data length will not be longer than PAGE_SIZE.
+ *
+ * How are page numbers decided?
+ * page number = file_num & index in its file.
+ *
  * Accessing data on a page of a file requires first reading 
- * the page into a buffer pool in main memory. While a page 
+ * the page into a buffer pool in memory. While a page 
  * is in memory and its data is available for manipulation, 
  * the page is said to be "pinned". After the manipulation 
  * is done, the page is "unpinned". Unpinning a page does 
@@ -159,7 +168,6 @@ impl BufferPage {
  */
 #[derive(Clone)]
 pub struct BufferManager {
-    buffer_table: Vec<NonNull<BufferPage>>, 
     num_pages: u32, //number of pages in the buffer pool, free pages not included.
     page_size: usize,//this page_size is the real page size, including page header, bitmap, and the data field. Will be provided when the buffer is created.
     first: i32, //most recently used page number.
@@ -168,6 +176,7 @@ pub struct BufferManager {
      * all free pages are linked by the page 
      * in their data structure.*/
     free: i32,
+    buffer_table: Vec<NonNull<BufferPage>>, 
     page_table: HashMap<u32, usize> //we need this table to get a page quickly.
 }
 
@@ -186,13 +195,13 @@ impl std::fmt::Debug for BufferManager {
 }
 
 impl BufferManager {
-    pub fn new(page_size: usize) -> Self {
+    pub fn new(num_pages: usize) -> Self {
         println!("Initializing Buffer Manager.");
         BufferManager {
             buffer_table: {
                 //let mut v = vec![NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap(); 128];
-                let mut v: Vec<NonNull<BufferPage>> = Vec::with_capacity(128);
-                for i in 0..127 {
+                let mut v: Vec<NonNull<BufferPage>> = Vec::with_capacity(num_pages);
+                for i in 0..(num_pages-1) {
                     let mut temp = Box::new(BufferPage::new());
                     temp.next = i+1;
                     v.push(NonNull::new(Box::into_raw(temp)).unwrap());
@@ -202,8 +211,8 @@ impl BufferManager {
                 debug!("buffer initial length = {}", v.len());
                 v
             },
-            num_pages: 0,
-            page_size,
+            num_pages: 0,//represent for the number of pages stored in the buffer_table, instead of the capacity of the buffer_table.
+            page_size: size_of::<PageHeader>() + PAGE_SIZE,
             first: -1,
             last: -1,
             free: 0,
@@ -247,8 +256,11 @@ impl BufferManager {
 
     /*
      * read page header and data.
+     * page_num indicates the location of the page in a file.
+     * index indicates the index of the BufferPage at the buffer_table.
+     * fp: file pointer of the file to read from.
      */
-    fn read_page(&mut self, page_num: u32, fp: &File, index: usize) -> Result<(), PageFileError> {
+    fn read_page(&mut self, page_num: u32, index: usize, fp: &File) -> Result<(), PageFileError> {
         let file_page_index = (page_num & 0x0000ffff) as usize;
         let buffer_page = unsafe {
             &mut *self.buffer_table[index].as_ptr()
@@ -290,11 +302,16 @@ impl BufferManager {
      * possibility that there are more than 1<<16 pages in one file.
      * In this way, we can make sure each page number is identical.
      */
-    fn write_page(&self, page_num: u32, fp: &File, index: usize) -> Result<(), PageFileError> {
+    fn write_page(&self, page_num: u32, index: usize) -> Result<(), PageFileError> {
         let file_page_index = (page_num & 0x0000ffff) as usize;
         let buffer_page = unsafe {
             &mut *self.buffer_table[index].as_ptr()
         };
+        
+        if let None = buffer_page.fp {
+            return Err(PageFileError::NoFilePointer);
+        }
+        let fp = buffer_page.fp.unwrap();
 
         if buffer_page.data.is_null() {
             return Err(PageFileError::DataUnintialized);
@@ -483,7 +500,12 @@ impl BufferManager {
         Ok(temp)
     }
 
-    pub fn get_page(&mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
+    /*
+     * When we get a page, we don't actually return the BufferPage struct, instead, just
+     * the data pointer.
+     * As the page may be read from a file, so we need to provide a file pointer.
+     */
+    pub fn get_page(&mut self, page_num: u32, fp: &File) -> Result<*mut u8, Error> {
         let cap = self.buffer_table.capacity();
         let index: usize = match self.page_table.get(&page_num) {
             None => cap,//index cannot be equal to or greater than the buffer_table capacity.
@@ -492,34 +514,22 @@ impl BufferManager {
         if index < cap {
             debug!("Getting page with page_num={:#010x} from buffer", page_num);
             self.update_page(index);
-            Some(self.buffer_table[index])
+            Ok(self.buffer_table[index].data)
         } else {
             debug!("Reading page with page_num={:#010x} from file.", page_num);
             
             let res = self.internal_alloc();
-            if let Err(v) = res {
-                dbg!(v);
-                return None;
+            if let Err(e) = res {
+                dbg!(&e);
+                return Err(Error::GetPageError);
             }
             let newpage_index = res.unwrap();
             dbg!(&newpage_index);
-            match self.read_page(page_num, fp, newpage_index) {
+            match self.read_page(page_num, newpage_index) {
                 Ok(()) => {},
-                Err(PageFileError::ReadAtError) => {
-                    error!("read_at function error.");
-                    return None;
-                },
-                Err(PageFileError::IncompleteRead) => {
-                    error!("read_at function IncompleteRead");
-                    return None;
-                }
-                Err(PageFileError::DestShort) => {
-                    error!("Unexpected error: page data length is too short");
-                    return None;
-                },
-                Err(_) => {
-                    error!("Unexpected error occured");
-                    return None;
+                Err(e) => {
+                    dbg!(&e);
+                    return Err(Error::GetPageError);
                 }
             }
 
@@ -544,7 +554,7 @@ impl BufferManager {
      * Also, the newpage will not be initialized. The 
      * initialization work will be done when the page is used.
      */
-    pub fn allocate_page(&mut self, page_num: u32, fp: &File) -> Option<NonNull<BufferPage>> {
+    pub fn allocate_page(&mut self, page_num: u32, fp: &File) -> Result<*mut u8, Error> {
         if let Some(_) = self.page_table.get(&page_num) {
             debug!("The page is in the buffer");
             dbg!(page_num);
@@ -552,7 +562,7 @@ impl BufferManager {
         let res = self.internal_alloc();
         if let Err(e) = res {
             dbg!(e);
-            return None;
+            return Err(Error::AllocatePageError);
         }
         let newpage_index = res.unwrap();
         self.page_table.insert(page_num, newpage_index);
@@ -567,8 +577,7 @@ impl BufferManager {
         if page.data.is_null() {
             page.data = Self::allocate_buffer(self.page_size);
         }
-        debug!("returned");
-        Some(self.buffer_table[newpage_index])
+        Ok(page.data)
     }
 
     /*
@@ -596,8 +605,7 @@ impl BufferManager {
             &mut *self.buffer_table[index].as_ptr()
         };
         if page.pin_count == 0 {
-            debug!("The page is already unpinned");
-            return ;
+            panic!("The page is already unpinned");
         }
         page.pin_count -= 1;
         if page.pin_count == 0 {

@@ -37,10 +37,11 @@ use std::mem::size_of;
 use std::ptr::NonNull;
 use std::{println as info, println as debug, println as warn, println as error};
 
-use crate::errors::PageFileError;
+use crate::errors::Error::{Self, PageFileError};
 use super::buffer_manager::BufferPage;
 
 pub const PAGE_SIZE: usize = 4096;
+const BUFFER_SIZE: usize = 128;
 
 /*
  * We need a data structure to represent a page header.
@@ -61,12 +62,22 @@ pub const PAGE_SIZE: usize = 4096;
  * size should be determined when the table or I should say the 
  * file is created.
  *
- * So here's a real Page: {PageHeader, Bitmap, Data(Records)}.
+ * So here's a real Page: {PageHeader, data(data can be decided by different clients.)}.
+ */
+
+/*
+ * How do we represent a file.
+ * As we are building a page management client and its page may have multiple format,
+ * so we just collect some common data for page managing.
+ * Like in record management module, we use bitmap to manage all records in a page.
+ * And in indexing module, we use linked list to manage all index entries. 
+ * These are decided by the client, the page management module just need to provide a 
+ * page to store PAGE_SIZE long data. And returns a pointer whenever a page num is 
+ * provided.
  */
 #[derive(Debug, Clone, Copy)]
 pub struct PageHeader {
     pub page_num: u32, //page number
-    pub num_records: usize, //number of records in the page.
     pub next_free: u32, //next_free is the page_num of the next free page. All free pages are linked together by this.
 }
 
@@ -74,21 +85,20 @@ impl PageHeader {
     pub fn new(page_num: u32) -> Self {
         Self {
             page_num,
-            num_records: 0,
             next_free: 0,
         }
     }
 }
 
+/*
+ * PageFile layout:
+ *  |PageFileHeader|pages|
+ */
 #[derive(Debug, Clone, Copy)]
 pub struct PageFileHeader {
     file_num: u16,
     num_pages: usize, //number of pages.
     free: u32, //page number of next free page, if equals to 0, there is no free page.
-    record_size: usize,
-    bitmap_size: usize,
-    page_size: usize,
-    records_perpage: usize //capacity of a page containing records, we need this to determine if a page is full.
 }
 
 impl PageFileHeader {
@@ -105,28 +115,6 @@ impl PageFileHeader {
             file_num,
             num_pages: 0,
             free: 0,
-            record_size,
-            bitmap_size: {
-                if record_size == 0 {
-                    0
-                } else {
-                    Self::calc_bitmap_size(record_size)
-                }
-            },
-            page_size: {
-                if record_size == 0 {
-                    0
-                } else {
-                    size_of::<PageHeader>() + Self::calc_bitmap_size(record_size) + PAGE_SIZE
-                }
-            },
-            records_perpage: {
-                if record_size == 0 {
-                    0
-                } else {
-                    PAGE_SIZE/record_size
-                }
-            }
         }
     }
 }
@@ -151,14 +139,50 @@ impl PageFileHeader {
  */
 #[derive(Debug)]
 pub struct PageFileManager {
-    fp: File, //opend file pointer.
-    first_free: u32, //first free page.
-    file_header: PageFileHeader,
+    first_free: u32, //first free page in the page file, when we need to allocate a page, we don't directly create a page in page file, instead, we look for empty pages previously created. And all these pages are linked together.
+    file_header: PageFileHeader,//num_pages wrapped: when empty pages run out, we need to allocate a new page, page location in the page file and its page num are decided by this variable. Once a new page is born, it counts by 1.
     buffer_manager: BufferManager //the buffer manager and the page file manager are interrelated.
 }
 
 impl PageFileManager {
-    pub fn new(fp: &File) -> Self {
+    /*
+     * create a page file.
+     */
+    pub fn create_file(file_name: &String, file_num: u16) -> Result<File, Error> {
+        let file_header = PageFileHeader {
+            file_num, 
+            num_pages: 0,
+            free: 0
+        };
+        match OpenOptions::new().read(true).write(true).create(true).open(file_name) {
+            Err(e) => {
+                dbg!(&e);
+                Err(Error::CreatePageFileError)
+            },
+            Ok(fp) => {
+                let sli = unsafe {
+                    std::slice::from_raw_parts(&file_header as *const _ as *const u8, size_of::<PageFileHeader>())
+                };
+                match fp.write_at(sli, 0) {
+                    Err(e) => {
+                        dbg!(&e);
+                        panic!("write at error");
+                    },
+                    Ok(write_bytes) => {
+                        if write_bytes < size_of::<PageFileHeader>() {
+                            dbg!(write_bytes);
+                            return Err(Error::IncompleteWrite);
+                        }
+                    }
+                }
+                Ok(fp.try_clone().expect("Clone fp error"))
+            }
+        }
+    }
+
+    pub fn 
+
+    pub fn new() -> Self {
         println!("Initializing Page File Manager");
         let temp = Self::read_header(fp);
         if let Err(e) = temp {
@@ -171,7 +195,7 @@ impl PageFileManager {
             fp: fp.try_clone().unwrap(),
             first_free: header.free,
             file_header: header,
-            buffer_manager: BufferManager::new(header.page_size)
+            buffer_manager: BufferManager::new(BUFFER_SIZE)
         }
     }
 

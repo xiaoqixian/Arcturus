@@ -94,6 +94,9 @@
  *     1. find the appropriate index, check if it's a duplicate entry.
  *        If it's duplicate, delete from the corresponding bucket.
  *        Else, just delete it from entries and keys.
+ *     2. If the leaf is empty, delete it from the tree. 
+ *        According to the source code, there is no such mechanism that nodes that has 
+ *        less than half of max keys will merge with each other.
  *
  * DeleteFromBucket:
  *   parameters:
@@ -107,8 +110,8 @@
  *     2. If this is the last bucket, search in all entries and check for an entry 
  *        that page num and slot num match RID.
  *        If this bucket has 1 or less key left, then just delete it.
- *     3. If this is not the last bucket, after our search in the next buckets. If
- *        the deletePage sign is set, and there is 1 or less key left in the next 
+ *     3. If this is not the last bucket, after our search in the next bucket. If
+ *        the deletePage flag is set, and there is 1 or less key left in the next 
  *        bucket, the next bucket is deleted.
  *
  * DeleteFromNode:
@@ -126,3 +129,5 @@
  *  steps:
  *    
  */
+
+ struct Node 
