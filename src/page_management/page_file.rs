@@ -324,9 +324,9 @@ impl PageFileHandle {
             page_header = unsafe {
                 &mut *(data as *mut PageHeader)
             };
-            dbg!(&page_header);
             self.header.free = page_header.next_free;
         } else {
+            debug!("Allocate a new page");
             page_num = self.get_page_num(self.header.num_pages);
             self.header.num_pages += 1;
             data = match self.buffer_manager.allocate_page(page_num, &self.fp) {
@@ -339,10 +339,11 @@ impl PageFileHandle {
             page_header = unsafe {
                 &mut *(data as *mut PageHeader)
             };
-            dbg!(&page_header);
         }
 
         page_header.next_free = 0;
+        page_header.page_num = page_num;
+        dbg!(&page_header);
         self.header_changed = true;
         //zero out the page data.
         unsafe {
@@ -374,7 +375,9 @@ impl PageFileHandle {
                     return Err(Error::PageDisposed);
                 }
                 page_header.next_free = self.header.free;
+                dbg!(&page_header);
                 self.header.free = page_num;
+                dbg!(&self.header.free);
                 self.header_changed = true;
                 self.mark_dirty(page_num);//page header changed.
                 self.buffer_manager.unpin(page_num);

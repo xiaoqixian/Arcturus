@@ -72,6 +72,7 @@ fn page_file_test1() {
     let table_name = String::from("Table1");
     pf.create_file(&table_name);
     let mut fh = pf.open_file(&table_name).expect("");
+    let mut v = Vec::new();
     for i in 0..128 {
         let p = fh.allocate_page();
         if let Err(e) = p {
@@ -80,8 +81,10 @@ fn page_file_test1() {
         }
         let ph = p.unwrap();
         dbg!(&ph);
-        fh.mark_dirty(ph.get_page_num());
-        fh.unpin_page(ph.get_page_num());
+        v.push(ph);
+    }
+    for ph in v {
+        fh.dispose_page(ph.get_page_num());
     }
 }
 

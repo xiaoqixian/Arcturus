@@ -46,8 +46,8 @@ use std::{println as debug, println as info, println as error};
 pub struct BufferPage {
     pub data: *mut u8,//data including page header, bitmap, and the records data.
     //header: page_file::PageHeader,//header read from data, for more convnient operation on page header.
-    next: u32,
-    prev: u32,
+    next: i32,
+    prev: i32,
     dirty: bool,
     pin_count: u32,
     page_num: u32,
@@ -58,8 +58,8 @@ impl BufferPage {
     pub fn new() -> Self {
         BufferPage {
             data: ptr::null_mut(),
-            next: 0,
-            prev: 0,
+            next: -1,
+            prev: -1,
             dirty: false,
             pin_count: 0,
             page_num: 0, //o is an invalid page number, so we use it for page initialization.
@@ -112,12 +112,12 @@ impl BufferPage {
 pub struct BufferManager {
     num_pages: u32, //number of pages in the buffer pool, free pages not included.
     page_size: usize,//this page_size is the real page size, including page header, bitmap, and the data field. Will be provided when the buffer is created.
-    first: u32, //most recently used page number.
-    last: u32, //last recently used page number.
+    first: i32, //index of most recently used page number at the buffer_table.
+    last: i32, //last recently used page number.
     /* page number of the first free page.
      * all free pages are linked by the page 
      * in their data structure.*/
-    free: u32,
+    free: i32,
     buffer_table: Vec<NonNull<BufferPage>>, 
     page_table: HashMap<u32, usize> //we need this table to get a page quickly.
 }
@@ -143,7 +143,7 @@ impl BufferManager {
             buffer_table: {
                 //let mut v = vec![NonNull::new(Box::into_raw(Box::new(BufferPage::new()))).unwrap(); 128];
                 let mut v: Vec<NonNull<BufferPage>> = Vec::with_capacity(num_pages);
-                for i in 0..(num_pages as u32 - 1) {
+                for i in 0..(num_pages as i32 - 1) {
                     let mut temp = Box::new(BufferPage::new());
                     temp.next = i+1;
                     v.push(NonNull::new(Box::into_raw(temp)).unwrap());
@@ -155,8 +155,8 @@ impl BufferManager {
             },
             num_pages: 0,//represent for the number of pages stored in the buffer_table, instead of the capacity of the buffer_table.
             page_size: size_of::<PageHeader>() + page_file::PAGE_SIZE,
-            first: 0,
-            last: 0,
+            first: -1,
+            last: -1,
             free: 0,
             page_table: HashMap::new()
         }
@@ -181,7 +181,7 @@ impl BufferManager {
         self.buffer_table = new_table;
         info!("Buffer pool new capacity: {}", self.buffer_table.capacity());
         //link all free pages.
-        let start = cap;
+        let start = cap as i32;
         for i in 0..(start-1) {
             let mut new_page = Box::new(BufferPage::new());
             new_page.next = start+i+1;
@@ -313,9 +313,9 @@ impl BufferManager {
         page.page_num = 0;
         //link the page to the free list.
         page.next = self.free;
-        page.prev = 0;
+        page.prev = -1;
         page.fp = None;
-        self.free = index as u32;
+        self.free = index as i32;
         self.num_pages -= 1;
         Ok(())
     }
@@ -327,14 +327,14 @@ impl BufferManager {
         let page = unsafe {
             & *self.buffer_table[index].as_ptr()
         };
-        if page.prev == 0 {
+        if page.prev == -1 {
             self.first = page.next;
         } else {
             unsafe {
                 self.buffer_table[page.prev as usize].as_mut().next = page.next;
             }
         }
-        if page.next == 0 {
+        if page.next == -1 {
             self.last = page.prev;
         } else {
             unsafe {
@@ -348,16 +348,16 @@ impl BufferManager {
             &mut *self.buffer_table[index].as_ptr()
         };
         page.next = self.first;
-        if self.first != 0 {
+        if self.first != -1 {
             unsafe {
-                self.buffer_table[self.first as usize].as_mut().prev = index as u32;
+                self.buffer_table[self.first as usize].as_mut().prev = index as i32;
             }
         }
-        self.first = index as u32;
+        self.first = index as i32;
         debug!("self.first points to {}", index);
-        if self.last == 0 {
+        if self.last == -1 {
             debug!("self.last points to {}", index);
-            self.last = index as u32;
+            self.last = index as i32;
         }
         //dbg!(page.clone_metadata());
     }
@@ -372,8 +372,8 @@ impl BufferManager {
      */
     fn update_page(&mut self, index: usize) {
         let pin_count: u32;
-        let prev: u32;
-        let next: u32;
+        let prev: i32;
+        let next: i32;
         {
             let page = unsafe {
                 self.buffer_table[index].as_ref()
@@ -389,14 +389,14 @@ impl BufferManager {
             return ;
         }
         //remove the page from the unused list.
-        if prev == 0 {
+        if prev == -1 {
             self.first = next;
         } else {
             unsafe {
                 (*self.buffer_table[prev as usize].as_ptr()).next = next;
             }
         }
-        if next == 0 {
+        if next == -1 {
             self.last = prev;
         } else {
             unsafe {
@@ -407,12 +407,12 @@ impl BufferManager {
             self.buffer_table[index].as_mut()
         };
         page.pin_count += 1;
-        page.prev = 0;
-        page.next = 0;
+        page.prev = -1;
+        page.next = -1;
     }
 
     fn internal_alloc(&mut self) -> Result<usize, PageFileError> {
-        if self.free == 0 {
+        if self.free == -1 {
             debug!("No free pages");
             dbg!(&self.last);
             match self.free_page(self.last as usize) {
@@ -472,7 +472,7 @@ impl BufferManager {
 
             self.page_table.insert(page_num, newpage_index);
             let new_page = unsafe {&mut *self.buffer_table[newpage_index].as_ptr()};
-            new_page.next = 0;
+            new_page.next = -1;
             new_page.pin_count = 1;
             new_page.page_num = page_num;
             new_page.fp = Some(fp.try_clone().unwrap());
@@ -511,7 +511,7 @@ impl BufferManager {
         page.page_num = page_num;
         page.fp = Some(fp.try_clone().unwrap());
         page.pin_count = 1;
-        page.next = 0;
+        page.next = -1;
         
         if page.data.is_null() {
             page.data = Self::allocate_buffer(self.page_size);
