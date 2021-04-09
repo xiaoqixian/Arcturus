@@ -30,14 +30,14 @@
  * if and only if the page is marked as "dirty".
  */
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use super::buffer_manager::BufferManager;
 use std::os::unix::fs::FileExt;
 use std::mem::size_of;
 use std::ptr::NonNull;
 use std::{println as info, println as debug, println as warn, println as error};
 
-use crate::errors::Error::{Self, PageFileError};
+use crate::errors::{Error, PageFileError};
 use super::buffer_manager::BufferPage;
 
 pub const PAGE_SIZE: usize = 4096;
@@ -91,13 +91,40 @@ impl PageHeader {
 }
 
 /*
+ * PageHandle is used to represent a page between modules,
+ * implement some functions that clients may operate on a page.
+ */
+#[derive(Debug, Copy, Clone)]
+pub struct PageHandle {
+    page_num: u32,
+    data: *mut u8
+}
+
+impl PageHandle {
+    pub fn new(page_num: u32, data: *mut u8) -> Self {
+        Self {
+            page_num,
+            data
+        }
+    }
+
+    pub fn get_page_num(&self) -> u32 {
+        self.page_num
+    }
+
+    pub fn get_data(&self) -> *mut u8 {
+        self.data
+    }
+}
+
+/*
  * PageFile layout:
  *  |PageFileHeader|pages|
  */
 #[derive(Debug, Clone, Copy)]
 pub struct PageFileHeader {
     file_num: u16,
-    num_pages: usize, //number of pages.
+    num_pages: usize, //number of pages, including disposed pages.
     free: u32, //page number of next free page, if equals to 0, there is no free page.
 }
 
@@ -139,21 +166,27 @@ impl PageFileHeader {
  */
 #[derive(Debug)]
 pub struct PageFileManager {
-    first_free: u32, //first free page in the page file, when we need to allocate a page, we don't directly create a page in page file, instead, we look for empty pages previously created. And all these pages are linked together.
-    file_header: PageFileHeader,//num_pages wrapped: when empty pages run out, we need to allocate a new page, page location in the page file and its page num are decided by this variable. Once a new page is born, it counts by 1.
-    buffer_manager: BufferManager //the buffer manager and the page file manager are interrelated.
+    num_files: u16,
+    buffer_manager: BufferManager//place where the only BufferManager get instaniated, every time a page file is opened, a reference to this instance is created and saved in the corresponding PageFileHandle.
 }
 
 impl PageFileManager {
+    pub fn new() -> Self {
+        Self {
+            num_files: 1,
+            buffer_manager: BufferManager::new(BUFFER_SIZE)
+        }
+    }
     /*
      * create a page file.
      */
-    pub fn create_file(file_name: &String, file_num: u16) -> Result<File, Error> {
+    pub fn create_file(&mut self, file_name: &String) -> Result<File, Error> {
         let file_header = PageFileHeader {
-            file_num, 
+            file_num: self.num_files, 
             num_pages: 0,
             free: 0
         };
+        self.num_files += 1;
         match OpenOptions::new().read(true).write(true).create(true).open(file_name) {
             Err(e) => {
                 dbg!(&e);
@@ -180,35 +213,59 @@ impl PageFileManager {
         }
     }
 
-    pub fn 
-
-    pub fn new() -> Self {
-        println!("Initializing Page File Manager");
-        let temp = Self::read_header(fp);
-        if let Err(e) = temp {
-            dbg!(e);
-            panic!("read header error");
-        }
-        let header = temp.unwrap();
-        dbg!(&header);
-        PageFileManager {
-            fp: fp.try_clone().unwrap(),
-            first_free: header.free,
-            file_header: header,
-            buffer_manager: BufferManager::new(BUFFER_SIZE)
+    pub fn open_file(&mut self, file_name: &String) -> Result<PageFileHandle, Error> {
+        match File::open(file_name) {
+            Err(e) => {
+                dbg!(&e);
+                Err(Error::FileOpenError)
+            },
+            Ok(f) => {
+                Ok(PageFileHandle::new(&f, &mut self.buffer_manager as *mut _))
+            }
         }
     }
+}
 
-    pub fn get_pagesize(&self) -> usize {
-        self.buffer_manager.get_pagesize()
-    }
-    
-    pub fn get_first_free(&self) -> u32 {
-        self.first_free
-    }
 
-    pub fn get_bitmap_size(&self) -> usize {
-        self.file_header.bitmap_size
+/*
+ * Every page file is associated with a PageFileHandle, once you open a file, a 
+ * PageFileHandle is returned. 
+ * Once you have a PageFileHandle, you can use it for page allocation, page getting, or
+ * page disposition.
+ * 
+ * All PageFileHandles share a same BufferManager, otherwise it will be big waste if 
+ * we create a BufferManager for each page file. 
+ * As we have a muttable reference of a BufferManager instance in each PageFileHandle, 
+ * it breaks the borrowing rules of Rust, so we mutablly refer the instance by its raw
+ * pointer.
+ */
+#[derive(Debug)]
+pub struct PageFileHandle {
+    fp: File,
+    header: PageFileHeader,
+    header_changed: bool,//set true when the header is changed, then we need to write the header back to file when the file is about to be closed.
+    buffer_manager: &'static mut BufferManager
+}
+
+impl PageFileHandle {
+    pub fn new(f: &File, bm: *mut BufferManager) -> Self {
+        Self {
+            fp: f.try_clone().expect("File pointer cloning error"),
+            header: {
+                let res = Self::read_header(f);
+                match res {
+                    Err(e) => {
+                        dbg!(&e);
+                        panic!("Read PageFileHeader error");
+                    },
+                    Ok(v) => v
+                }
+            },
+            header_changed: false,
+            buffer_manager: unsafe {
+                &mut *bm
+            }
+        }
     }
 
     fn read_header(fp: &File) -> Result<PageFileHeader, PageFileError> {
@@ -231,111 +288,122 @@ impl PageFileManager {
 
     /*
      * allocate a page in the file, may get page which was 
-     * previously disposed.
+     * previously disposed. How we know where is the previously disposed page?
+     * All disposed pages are linked together, and file header reserves the header
+     * of the linked list.
+     *
      * After allocation, the page is read into buffer if it
-     * is not in the buffer, and the BufferPage pointer is 
-     * returned.
+     * is not in the buffer, and the data pointer is returned.
      *
      * Method only called when the page that self.first_free points 
      * to is full. 
      */
-    pub fn allocate_page(&mut self) -> Result<NonNull<BufferPage>, PageFileError> {
-        let mut page_num: u32 = 0;
-        if self.first_free > 0 {
+    pub fn allocate_page(&mut self) -> Result<PageHandle, Error> {
+        let page_num: u32;
+        let first_free = self.header.free;
+        let mut page_header: &mut PageHeader;
+        let data: *mut u8;
+
+        if first_free > 0 {
             /*
              * For a previously allocated page, we don't need
              * any initialization. Cause the work was already 
              * done when the page was disposed.
              */
             debug!("Allocate a previously allocated page");
-            match self.buffer_manager.get_page(self.first_free, &self.fp) {
-                None => {
-                    return Err(PageFileError::GetPageError);
+            page_num = first_free;
+            data = match self.buffer_manager.get_page(first_free, &self.fp) {
+                Err(e) => {
+                    dbg!(&e);
+                    return Err(Error::GetPageError);
                 },
-                Some(v) => {
-                    let page = unsafe {
-                        v.as_ref()
-                    };
-                    self.first_free = page.get_next_free();
-                    page_num = self.first_free;
-                    self.buffer_manager.unpin(page.get_page_num());
-                }
-            }
+                Ok(v) => v
+            };
+            //update page file header linked list.
+            self.header_changed = true;
+            page_header = unsafe {
+                &mut *(data as *mut PageHeader)
+            };
+            dbg!(&page_header);
+            self.header.free = page_header.next_free;
+        } else {
+            page_num = self.get_page_num(self.header.num_pages);
+            self.header.num_pages += 1;
+            data = match self.buffer_manager.allocate_page(page_num, &self.fp) {
+                Err(e) => {
+                    dbg!(&e);
+                    return Err(Error::AllocatePageError);
+                },
+                Ok(v) => v
+            };
+            page_header = unsafe {
+                &mut *(data as *mut PageHeader)
+            };
+            dbg!(&page_header);
         }
 
-        if page_num == 0 {
-            /* A new page first occurs in the buffer, and will
-             * not be written in file until it is freed and the
-             * buffer makes it to do so.
-             */
-            debug!("Allocate a new page");
-            page_num = self.get_page_num(self.file_header.num_pages);
-            self.first_free = page_num;
-        }
-        dbg!(&page_num);
-
-        let res = self.buffer_manager.allocate_page(page_num, &self.fp);
-        if let None = res {
-            return Err(PageFileError::AllocatePageError);
-        }
+        page_header.next_free = 0;
+        self.header_changed = true;
+        //zero out the page data.
         unsafe {
-            res.unwrap().as_mut().init_page_header(page_num);
+            let p = data.offset(size_of::<PageHeader>() as isize);
+            std::ptr::write_bytes(p, 0, PAGE_SIZE);
         }
-        self.file_header.num_pages += 1;
-        Ok(res.unwrap())
-    }
+        self.mark_dirty(page_num);//the header is changed.
+        Ok(PageHandle::new(page_num, data))
+   }
 
     /*
      * Dispose a page.
      * The disposed page will be linked and all its data will
      * not be cleared.
      */
-    pub fn dispose_page(&mut self, page_num: u32) -> Result<(), PageFileError> {
+    pub fn dispose_page(&mut self, page_num: u32) -> Result<(), Error> {
         match self.buffer_manager.get_page(page_num, &self.fp) {
-            None => {
+            Err(e) => {
                 dbg!(page_num);
-                Err(PageFileError::GetPageError)
+                dbg!(&e);
+                Err(Error::GetPageError)
             },
-            Some(mut v) => {
-                let page = unsafe {
-                    v.as_mut()
+            Ok(v) => {
+                let page_header = unsafe {
+                    &mut *(v as *mut PageHeader)
                 };
-                page.set_next_free(self.first_free);
-                self.first_free = page_num;
-                dbg!(&page);
-                page.mark_dirty();
+                if page_header.next_free != 0 {
+                    dbg!(&page_header);
+                    return Err(Error::PageDisposed);
+                }
+                page_header.next_free = self.header.free;
+                self.header.free = page_num;
+                self.header_changed = true;
+                self.mark_dirty(page_num);//page header changed.
                 self.buffer_manager.unpin(page_num);
                 Ok(())
             }
         }
     }
 
-    pub fn get_page(&mut self, page_num: u32) -> Option<NonNull<BufferPage>> {
-        self.buffer_manager.get_page(page_num, &self.fp)
+    pub fn get_page(&mut self, page_num: u32) -> Result<PageHandle, Error> {
+        match self.buffer_manager.get_page(page_num, &self.fp) {
+            Err(e) => {
+                dbg!(&e);
+                Err(Error::GetPageError)
+            },
+            Ok(v) => {
+                Ok(PageHandle::new(page_num, v))
+            }
+        }
     }
 
     pub fn unpin_page(&mut self, page_num: u32) {
         self.buffer_manager.unpin(page_num);
     }
 
+    pub fn mark_dirty(&mut self, page_num: u32) -> Result<(), PageFileError> {
+        self.buffer_manager.mark_dirty(page_num)
+    }
+
     fn get_page_num(&self, page_index: usize) -> u32 {
-        ((self.file_header.file_num as u32) << 16) | (page_index as u32)
-    }
-
-    pub fn get_page_offset(index: usize, page_size: usize) -> u64 {
-        (size_of::<PageFileHeader>() + index*page_size) as u64
-    }
-
-    fn get_bitmap_offset(index: usize, page_size: usize) -> u64 {
-        Self::get_page_offset(index, page_size) + (size_of::<PageHeader>() as u64)
-    }
-
-    fn get_data_offset(index: usize, page_size: usize) -> u64 {
-        Self::get_page_offset(index, page_size) + ((page_size - PAGE_SIZE) as u64)
-    }
-
-    pub fn link_page(&mut self, page: &mut BufferPage) {
-        page.set_next_free(self.first_free);
-        self.first_free = page.get_page_num();
+        ((self.header.file_num as u32) << 16) | (page_index as u32)
     }
 }
