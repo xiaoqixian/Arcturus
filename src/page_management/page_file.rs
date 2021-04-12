@@ -129,15 +129,7 @@ pub struct PageFileHeader {
 }
 
 impl PageFileHeader {
-    fn calc_bitmap_size(record_size: usize) -> usize {
-        let mut bitmap_size: usize = PAGE_SIZE/record_size/8;
-        if PAGE_SIZE/record_size % 8 != 0 {
-            bitmap_size += 1;
-        }
-        bitmap_size
-    }
-
-    pub fn new(file_num: u16, record_size: usize) -> Self {
+    pub fn new(file_num: u16) -> Self {
         PageFileHeader {
             file_num,
             num_pages: 0,
@@ -180,7 +172,7 @@ impl PageFileManager {
     /*
      * create a page file.
      */
-    pub fn create_file(&mut self, file_name: &String) -> Result<File, Error> {
+    pub fn create_file(&mut self, file_name: &String) -> Result<PageFileHandle, Error> {
         let file_header = PageFileHeader {
             file_num: self.num_files, 
             num_pages: 0,
@@ -208,7 +200,7 @@ impl PageFileManager {
                         }
                     }
                 }
-                Ok(fp.try_clone().expect("Clone fp error"))
+                Ok(PageFileHandle::new(&fp, &mut self.buffer_manager as *mut _))
             }
         }
     }
