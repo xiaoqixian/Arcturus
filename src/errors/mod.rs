@@ -19,12 +19,24 @@
  */
 #[derive(Debug)]
 pub enum Error {
-    GetPageError,
+    //public
+    IncompleteWrite,
+    FileOpenError,
+
+
+    //page_file module
+    UnpinPageError,
+    MarkDirtyError,
     AllocatePageError,
     CreatePageFileError,
-    IncompleteWrite,
+    GetPageError,
     PageDisposed,
-    FileOpenError,
+
+    //record_management module
+    
+
+    //indexing module
+    
 }
 
 #[derive(Debug)]
@@ -45,7 +57,7 @@ pub enum PageFileError {
     OutOfIndex,
     //Internal errors.
     PageInBuf, //the new page is already in buf.
-    PageNotInBuf, //the page to manipulate is not in buffer.
+    PageNotInBuf, //the page is not in buffer when we expect it is in the buffer.
     PageUnpinned, //returns when we expect the page to be pinned, but find opposite.
     PagePinned, //opposite to the PageUnpinned.
     PageFreed, //returns when free_page function tries to free a page but find it already freed.

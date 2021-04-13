@@ -529,12 +529,11 @@ impl BufferManager {
      * This is also a public interface, so internal errors won't get
      * passed out either.
      */
-    pub fn unpin(&mut self, page_num: u32) {
+    pub fn unpin(&mut self, page_num: u32) -> Result<(), PageFileError> {
         let index: usize;
         match self.page_table.get(&page_num) {
             None => {
-                error!("No such page in the buffer, must be wrong page number");
-                return ;
+                return Err(PageFileError::PageNotInBuf);
             },
             Some(v) => {
                 index = *v;
@@ -544,12 +543,13 @@ impl BufferManager {
             &mut *self.buffer_table[index].as_ptr()
         };
         if page.pin_count == 0 {
-            panic!("The page is already unpinned");
+            return Err(PageFileError::PageUnpinned);
         }
         page.pin_count -= 1;
         if page.pin_count == 0 {
             self.link(index);
         }
+        Ok(())
     }
 
     pub fn mark_dirty(&mut self, page_num: u32) -> Result<(), PageFileError> {

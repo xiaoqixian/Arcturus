@@ -158,7 +158,7 @@ impl PageFileHeader {
  */
 #[derive(Debug)]
 pub struct PageFileManager {
-    num_files: u16,
+    num_files: u16,//num_files is permenant, which means even after the database is closed. Next time it opens, num_files will still be the same. So num_files actually represent the number of all tables ever created. Even after tables are dropped later. Every time the database is opend, this data is read from a specific file.
     buffer_manager: BufferManager//place where the only BufferManager get instaniated, every time a page file is opened, a reference to this instance is created and saved in the corresponding PageFileHandle.
 }
 
@@ -238,6 +238,19 @@ pub struct PageFileHandle {
     header_changed: bool,//set true when the header is changed, then we need to write the header back to file when the file is about to be closed.
     buffer_manager: &'static mut BufferManager
 }
+
+impl Clone for PageFileHandle {
+    pub fn clone(&self) -> Self {
+        Self {
+            fp: self.fp.try_clone().expect("clone file pointer error"),
+            header: self.header,
+            header_changed: self.header_changed,
+            buffer_manager: unsafe {
+                &mut *(self.buffer_manager as *mut _)//my way of copying a reference.
+            }
+        }
+    }
+ }
 
 impl PageFileHandle {
     pub fn new(f: &File, bm: *mut BufferManager) -> Self {
@@ -390,12 +403,33 @@ impl PageFileHandle {
         }
     }
 
-    pub fn unpin_page(&mut self, page_num: u32) {
-        self.buffer_manager.unpin(page_num);
+    pub fn get_first_page(&mut self) -> Result<PageHandle, Error> {
+        let page_num: u32 = self.header.file_num << 16;
+        self.get_page(page_num)
     }
 
-    pub fn mark_dirty(&mut self, page_num: u32) -> Result<(), PageFileError> {
-        self.buffer_manager.mark_dirty(page_num)
+    pub fn unpin_page(&mut self, page_num: u32) -> Result<(), Error> {
+        if let Err(e) = self.buffer_manager.unpin(page_num) {
+            dbg!(&e);
+            Err(Error::UnpinPageError)
+        }
+    }
+
+    pub fn mark_dirty(&mut self, page_num: u32) -> Result<(), Error> {
+        if let Err(e) = self.buffer_manager.mark_dirty(page_num) {
+            dbg!(&e);
+            Err(Error::MarkDirtyError)
+        }
+    }
+
+    pub fn unpin_dirty_page(&mut self, page_num: u32) -> Result<(), Error> {
+        match Self::mark_dirty(page_num) {
+            Ok(_) => {},
+            err => {
+                return err;
+            }
+        }
+        Self::unpin_page(page_num)
     }
 
     fn get_page_num(&self, page_index: usize) -> u32 {
