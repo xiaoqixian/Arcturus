@@ -10,7 +10,7 @@
 pub mod errors;
 pub mod page_management;
 pub mod utils;
-//pub mod record_management;
+pub mod record_management;
 //pub mod indexing;
 
 //pub mod database_manager;

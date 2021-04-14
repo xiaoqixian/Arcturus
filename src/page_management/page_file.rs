@@ -239,8 +239,8 @@ pub struct PageFileHandle {
     buffer_manager: &'static mut BufferManager
 }
 
-impl Clone for PageFileHandle {
-    pub fn clone(&self) -> Self {
+impl PageFileHandle {
+    pub fn clone(&mut self) -> Self {
         Self {
             fp: self.fp.try_clone().expect("clone file pointer error"),
             header: self.header,
@@ -250,9 +250,7 @@ impl Clone for PageFileHandle {
             }
         }
     }
- }
 
-impl PageFileHandle {
     pub fn new(f: &File, bm: *mut BufferManager) -> Self {
         Self {
             fp: f.try_clone().expect("File pointer cloning error"),
@@ -274,7 +272,7 @@ impl PageFileHandle {
     }
 
     fn read_header(fp: &File) -> Result<PageFileHeader, PageFileError> {
-        let mut pf_header = PageFileHeader::new(0, 0);
+        let mut pf_header = PageFileHeader::new(0);
         unsafe {
             let slice_header = std::slice::from_raw_parts_mut(&mut pf_header as *mut _ as *mut u8, size_of::<PageFileHeader>());
             let res = fp.read_at(slice_header, 0);
@@ -355,8 +353,10 @@ impl PageFileHandle {
             let p = data.offset(size_of::<PageHeader>() as isize);
             std::ptr::write_bytes(p, 0, PAGE_SIZE);
         }
-        self.mark_dirty(page_num);//the header is changed.
-        Ok(PageHandle::new(page_num, data))
+        match self.mark_dirty(page_num) {
+            Ok(_) => Ok(PageHandle::new(page_num, data)),
+            Err(e) => Err(e)
+        }
    }
 
     /*
@@ -404,7 +404,7 @@ impl PageFileHandle {
     }
 
     pub fn get_first_page(&mut self) -> Result<PageHandle, Error> {
-        let page_num: u32 = self.header.file_num << 16;
+        let page_num = (self.header.file_num as u32) << 16;
         self.get_page(page_num)
     }
 
@@ -412,6 +412,8 @@ impl PageFileHandle {
         if let Err(e) = self.buffer_manager.unpin(page_num) {
             dbg!(&e);
             Err(Error::UnpinPageError)
+        } else {
+            Ok(())
         }
     }
 
@@ -419,17 +421,19 @@ impl PageFileHandle {
         if let Err(e) = self.buffer_manager.mark_dirty(page_num) {
             dbg!(&e);
             Err(Error::MarkDirtyError)
+        } else {
+            Ok(())
         }
     }
 
     pub fn unpin_dirty_page(&mut self, page_num: u32) -> Result<(), Error> {
-        match Self::mark_dirty(page_num) {
+        match self.mark_dirty(page_num) {
             Ok(_) => {},
             err => {
                 return err;
             }
         }
-        Self::unpin_page(page_num)
+        self.unpin_page(page_num)
     }
 
     fn get_page_num(&self, page_index: usize) -> u32 {

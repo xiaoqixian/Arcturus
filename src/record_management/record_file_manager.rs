@@ -16,7 +16,7 @@ use std::os::unix::fs::FileExt;
 
 use crate::page_management::page_file::{PageFileHandle, PageHandle, PageFileManager, PAGE_SIZE};
 use crate::errors::{RecordError, Error};
-use super::record_file_handle::{RecordFileHeader, RecordFileHandle};
+use super::record_file_handle::{RecordFileHeader, RecordFileHandle, RecordPageHeader};
 
 
 /*
@@ -27,6 +27,10 @@ use super::record_file_handle::{RecordFileHeader, RecordFileHandle};
  */
 
 pub struct RecordFileManager {
+
+}
+
+impl RecordFileManager {
     fn calc_num_records_per_page(record_size: usize) -> usize {
         let mut base: usize = PAGE_SIZE/(record_size + 1/8);
         if PAGE_SIZE % (record_size + 1/8) != 0 {
@@ -52,8 +56,8 @@ pub struct RecordFileManager {
         };
         let ph = match pfh.allocate_page() {
             Ok(v) => v,
-            error => {
-                return error;
+            Err(e) => {
+                return Err(e);
             }
         };
         dbg!(&ph);
@@ -63,8 +67,8 @@ pub struct RecordFileManager {
         };
         header.bitmap_offset = size_of::<RecordPageHeader>();
         header.num_records_per_page = Self::calc_num_records_per_page(record_size);
-        header.bitmap_size = Self::calc_bitmap_size(num_records_per_page);
-        header.records_offset = bitmap_offset + bitmap_size;
+        header.bitmap_size = Self::calc_bitmap_size(header.num_records_per_page);
+        header.records_offset = header.bitmap_offset + header.bitmap_size;
         header.num_pages = 0;
         dbg!(&header);
 
@@ -72,7 +76,7 @@ pub struct RecordFileManager {
             return Err(e);
         }
 
-        Ok(RecordFileHandle::new(ph.get_page_num(), *header, &pfh));
+        Ok(RecordFileHandle::new(ph.get_page_num(), *header, &mut pfh))
     }
 
     pub fn open_file(file_name: &String, pfm: &mut PageFileManager, record_size: usize) -> Result<RecordFileHandle, Error> {
@@ -97,6 +101,6 @@ pub struct RecordFileManager {
             return Err(e);
         }
 
-        Ok(RecordFileHandle::new(ph.get_page_num(), *header, &pfh))
+        Ok(RecordFileHandle::new(ph.get_page_num(), *header, &mut pfh))
     }
 }

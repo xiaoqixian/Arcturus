@@ -33,7 +33,8 @@ pub enum Error {
     PageDisposed,
 
     //record_management module
-    
+    SetBitmapError,
+    FindFreeSlotError,
 
     //indexing module
     
@@ -71,13 +72,17 @@ pub enum PageFileError {
 
 #[derive(Debug)]
 pub enum RecordError {
+    BitSet,//returns when the bit is set but expects not set.
+    BitUnset,//returns when the bit is unset but expects set.
+
+
     NoFilePointer,
     InvalidPageNumber,
     InvalidSlotNumber,
     OffsetError,
     NullPointerError,
     MismatchRecordOffset,//returns when offset is not integer multiple of page size.
-    PageFull,//returns when there is no free slot in the page, not an error actually. Just tell the caller that the page is full.
+    FullPage,//returns when there is no free slot in the page, not an error actually. Just tell the caller that the page is full.
     RecordDeleted,//returns when the record is already deleted. Usually detected when the bitmap is unset.
     IncompleteWrite,
     FileExist,
