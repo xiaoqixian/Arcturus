@@ -163,10 +163,8 @@ impl RecordFileHandle {
             &mut *(data as *mut RecordPageHeader)
         };
         rph.num_records -= 1;
-        if rph.num_records == 0 {
-            rph.next_free = self.free;
-            self.free = rid.get_page_num();
-        }
+        rph.next_free = self.free;
+        self.free = rid.get_page_num();
 
         match self.pfh.unpin_dirty_page(ph.get_page_num()) {
             Ok(_) => Ok(()),
@@ -180,24 +178,35 @@ impl RecordFileHandle {
      * allocate a new page and let next_free = new page num;
      */
     pub fn insert_record(&mut self, data: *mut u8) -> Result<RID, Error> {
-        let free = self.free;
         let mut slot_num: u32 = 0;
-        let mut page_num: u32 = 0;
-        let mut full = false;
         let mut ph = PageHandle::new(0, std::ptr::null_mut());
-        if free != 0 {
-            ph = match self.pfh.get_page(free) {
+        let mut flag = true;
+        let mut new_page = false;
+        while self.free != 0 && flag {
+            ph = match self.pfh.get_page(self.free) {
                 Err(e) => {
                     return Err(e);
                 },
                 Ok(v) => v
             };
+            let rph = unsafe {
+                &mut *(ph.get_data() as *mut RecordPageHeader)
+            };
+            if rph.num_records > self.header.num_records_per_page {
+                dbg!(&rph.num_records);
+                panic!(true);
+            }
+            if rph.num_records == self.header.num_records_per_page {
+                self.free = rph.next_free;
+                rph.next_free = 0;
+                self.pfh.unpin_dirty_page(ph.get_page_num());
+                continue;
+            }
+
             match self.find_free_slot(ph.get_data()) {
                 Ok(v) => {
                     slot_num = v;
-                },
-                Err(RecordError::FullPage) => {
-                    full = true;
+                    flag = false;
                 },
                 Err(e) => {
                     dbg!(&e);
@@ -207,7 +216,7 @@ impl RecordFileHandle {
             }
         }
 
-        if free == 0 || full {
+        if self.free == 0 {
             ph = match self.pfh.allocate_page() {
                 Ok(v) => v,
                 Err(e) => {
@@ -215,8 +224,8 @@ impl RecordFileHandle {
                     return Err(e);
                 }
             };
-            page_num = ph.get_page_num();
-            self.free = page_num;
+            new_page = true;
+            self.free = ph.get_page_num();
             //when we find a free slot, the bit corresponding to the slot is set.
             //so we don't need to set bitmap again.
             match self.find_free_slot(ph.get_data()) {
@@ -241,11 +250,16 @@ impl RecordFileHandle {
         let rph = unsafe {
             &mut *(ph.get_data() as *mut RecordPageHeader)
         };
-        rph.num_records += 1;
+        
+        if new_page {
+            rph.num_records = 1;
+        } else {
+            rph.num_records += 1;
+        }
 
         match self.pfh.unpin_dirty_page(ph.get_page_num()) {
             Ok(_) => Ok(RID {
-                page_num: page_num,
+                page_num: ph.get_page_num(),
                 slot_num: slot_num
             }),
             Err(e) => Err(e)
@@ -261,7 +275,7 @@ impl RecordFileHandle {
             std::slice::from_raw_parts_mut(p, self.header.bitmap_size)
         };
         let moder = (slot/8) as usize;
-        let remainder = moder * 8 - (slot as usize);
+        let remainder = (slot as usize) - moder * 8;
         let num = &mut bitmap[moder];
         let bit: u8 = *num & ((1 as u8)<<(7-remainder));
         
@@ -277,7 +291,6 @@ impl RecordFileHandle {
         } else {
             let max: u8 = 0xff;
             let temp: u8 = max ^ ((1 as u8)<<(7-remainder));
-            dbg!(&temp);
             *num &= temp;
         }
 
@@ -289,32 +302,16 @@ impl RecordFileHandle {
             let p = data.offset(self.header.bitmap_offset as isize);
             std::slice::from_raw_parts_mut(p, self.header.bitmap_size)
         };
-        
-        let mut index: usize = self.header.bitmap_size;
-        for i in 0..(self.header.bitmap_size) {
-            if bitmap[i] < 0xff {
-                index = i;
-                break;
-            }
-        }
-        
-        if index >= self.header.bitmap_size {
-            return Err(RecordError::FullPage);
-        }
 
-        let num = &mut bitmap[index];
-        let mut slot: u32 = 0;
-        dbg!(&num);
-        for i in 0..(8 as u8) {
-            let temp = (1<<(7-i)) as u8;
-            if *num & temp == 0 {
-                slot = (index as u32)*8 + (i as u32);
-                *num -= temp;
-                dbg!(&num);
-                break;
+        for i in 0..(self.header.num_records_per_page) {
+            let index: usize = i/8;
+            let offset = (i - index*8) as u8;
+            if bitmap[index] & (1<<(7-offset)) == 0 {
+                bitmap[index] += (1<<(7-offset));
+                return Ok(i as u32);
             }
         }
-        Ok(slot)
+        Err(RecordError::FullPage)
     }
 
     //the offset of a specific record in a page.

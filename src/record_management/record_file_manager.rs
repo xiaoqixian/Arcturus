@@ -32,11 +32,7 @@ pub struct RecordFileManager {
 
 impl RecordFileManager {
     fn calc_num_records_per_page(record_size: usize) -> usize {
-        let mut base: usize = PAGE_SIZE/(record_size + 1/8);
-        if PAGE_SIZE % (record_size + 1/8) != 0 {
-            base += 1;
-        }
-        base
+        8*PAGE_SIZE/(8*record_size + 1)
     }
 
     fn calc_bitmap_size(size: usize) -> usize {
@@ -70,6 +66,7 @@ impl RecordFileManager {
         header.bitmap_size = Self::calc_bitmap_size(header.num_records_per_page);
         header.records_offset = header.bitmap_offset + header.bitmap_size;
         header.num_pages = 0;
+        header.record_size = record_size;
         dbg!(&header);
 
         if let Err(e) = pfh.unpin_dirty_page(ph.get_page_num()) {

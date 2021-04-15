@@ -9,33 +9,14 @@
 
 const record_size: usize = 128;
 
-use super::record_manager::RecordManager;
-use super::file_manager::FileManager;
+use crate::page_management::page_file;
 use std::io;
 use std::io::prelude::*;
-
-fn init() -> RecordManager {
-    let mut fm = FileManager::new();
-    let table_name = String::from("Table1");
-    let mut fp = match fm.open_file(&table_name) {
-        Err(_) => {
-            match fm.create_file(&table_name, record_size) {
-                Err(e) => {
-                    dbg!(e);
-                    panic!("create file error");
-                },
-                Ok(v) => v
-            }
-        },
-        Ok(v) => v
-    };
-    RecordManager::new(&mut fp, record_size)
-}
 
 fn get_data() -> *mut u8 {
     use std::fs::OpenOptions;
     let mut fp = OpenOptions::new().read(true).write(false).open("/home/lunar/Documents/fzf").expect("Open file failed");
-    let buffer = crate::page_management::buffer_manager::BufferManager::allocate_buffer(record_size);
+    let buffer = crate::utils::allocate_buffer(record_size);
     let sli = unsafe {
         std::slice::from_raw_parts_mut(buffer, record_size)
     };
@@ -52,24 +33,15 @@ fn get_data() -> *mut u8 {
 
 #[test]
 fn record_manager_test1() {
-    let mut rm = init();
+    let mut pfm = page_file::PageFileManager::new();
+    let mut rfh = super::record_file_manager::RecordFileManager::create_file(&String::from("Table1"), &mut pfm, record_size).expect("create rfh failed");
     let data = get_data();
+    use crate::record_management::record_file_handle::RID;
 
-    dbg!(&rm.page_file_manager);
-//    let mut p = rm.page_file_manager.allocate_page().expect("allocate page error");
-    //let page = unsafe {
-        //p.as_mut()
-    //};
-    //dbg!(&page);
-    //let slot_num = rm.get_free_slot(page).expect("free slot error");
-    //dbg!(&slot_num);
-    //let offset = rm.get_record_offset(slot_num).expect("record offset error");
-    //dbg!(&offset);
-
-    use crate::record_management::record_manager::RID;
     let mut recs: Vec<RID> = Vec::new();
+
     for i in 0..40 {
-        match rm.insert_record(data) {
+        match rfh.insert_record(data) {
             Ok(v) => {
                 dbg!(v);
                 recs.push(v);
@@ -79,18 +51,11 @@ fn record_manager_test1() {
                 panic!(format!("Insert {}th record error!", i));
             }
         }
-    }
-    println!("\n--------Deleting Records------------\n");
-    let mut index = 0;
-    for rec in &recs {
-        if index > 5 {break;}
-        dbg!(&rec);
-        rm.delete_record(*rec).expect(format!("delete record {:?}  error", rec).as_str());
-        index += 1;
     }
 
-    for i in 0..3 {
-        match rm.insert_record(data) {
+    println!("\n----------Inserting New Records----------\n");
+    for i in 0..40 {
+        match rfh.insert_record(data) {
             Ok(v) => {
                 dbg!(v);
                 recs.push(v);
@@ -100,21 +65,27 @@ fn record_manager_test1() {
                 panic!(format!("Insert {}th record error!", i));
             }
         }
+    }
+
+    println!("\n--------Deleting Records------------\n");
+    for rec in &recs {
+        dbg!(&rec);
+        rfh.delete_record(rec).expect(format!("delete record {:?}  error", rec).as_str());
     }
     
-    rm.delete_record(recs[39]).expect(format!("delete record {:?} error", recs[39]).as_str());
-    for i in 0..1 {
-        match rm.insert_record(data) {
-            Ok(v) => {
-                dbg!(v);
-                recs.push(v);
-            },
-            Err(e) => {
-                dbg!(e);
-                panic!(format!("Insert {}th record error!", i));
-            }
-        }
-    }
+    //rfh.delete_record(recs[39]).expect(format!("delete record {:?} error", recs[39]).as_str());
+    //for i in 0..1 {
+        //match rm.insert_record(data) {
+            //Ok(v) => {
+                //dbg!(v);
+                //recs.push(v);
+            //},
+            //Err(e) => {
+                //dbg!(e);
+                //panic!(format!("Insert {}th record error!", i));
+            //}
+        //}
+    //}
    
 
     std::fs::remove_file("~/pros/arcturus/Table1");
