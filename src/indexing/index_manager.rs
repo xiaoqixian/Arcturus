@@ -130,4 +130,200 @@
  *    
  */
 
- struct Node 
+use super::AttrType;
+use crate::page_management::page_file::{PageHandle, PageFileHandle};
+use crate::errors::{IndexError, Error};
+
+const NO_MORE_SLOTS: u32 = 0xffffffff;//as 0 is a valid slot num, so we use 0xffffffff to represent a invalid slot_num.
+
+pub struct IndexFileHeader {
+    num_entries: usize,
+    attr_length: usize,
+    attr_type: AttrType,
+    
+    keys_offset: usize,
+    entries_offset: usize,
+
+    max_keys: usize,
+    max_entries: usize,
+
+    root_page: u32
+}
+
+pub struct EntryHeader {
+    is_leaf: bool,
+    is_empty: bool,
+
+    num_keys: usize,
+    free_slot: u32,
+    first_slot: u32,//the pointer to the first node of the linked list.
+
+    num1: u32, //invalid unless the entry is determined as a leaf node or an internal node.
+    num2: u32, 
+}
+
+pub struct LeafHeader {
+    is_leaf: bool,
+    is_empty: bool,
+
+    num_keys: usize,
+    free_slot: u32,
+    first_slot: u32,//the pointer to the first node of the linked list.
+
+    prev_page: u32,
+    next_page: u32
+}
+
+pub struct InternalHeader {
+    is_leaf: bool,
+    is_empty: bool,
+
+    num_keys: usize,
+    free_slot: u32,
+    first_slot: u32,//the pointer to the first node of the linked list.
+
+    first_child: u32,//page num of the first child node.
+    num2: u32
+}
+
+struct BucketHeader {
+    num_keys: usize,
+    free_slot: u32,
+    first_slot: u32,
+    next_bucket: u32
+}
+
+enum EntryType {
+    Unoccupied,
+    New,
+    Duplicate,//set when an index entry with a same value is inserted. At that time, the entry is linekd to a bucket which contains all relative RIDs.
+}
+
+struct NodeEntry {
+    et_type: EntryType,
+    next_slot: u32,//points to the next entry in the node.
+    page_num: u32,//page_num and slot_num associated with the record.
+    slot_num: u32,//if this is a duplicate entry, the page_num is set to be the bucket page num.
+}
+
+struct BucketEntry {
+    next_slot: u32,
+    page_num: u32,
+    slot_num: u32,
+}
+
+pub struct IndexHandle {
+    header: IndexFileHeader,
+    header_changed: bool,
+    root_ph: PageHandle //PageHandle associated with the root page.
+}
+
+impl IndexHandle {
+    pub fn insert_entry(&mut self, data: *mut u8, rid: &RID) -> Result<(), Error> {
+        let root_header = unsafe {
+            &mut *(self.root_ph.get_data() as *mut EntryHeader)
+        };
+        
+        //if the root page is full.
+        if root_header.num_keys == self.header.max_keys {
+            let new_ph = match self.create_new_node() {
+                Err(e) => {
+                    return Err(e);
+                },
+                Ok(v) => v
+            };
+            let new_root_header = unsafe {
+                &mut *(new_ph.get_data() as *mut EntryHeader)
+            };
+            new_root_header.is_empty = false;
+            new_root_header.first_child = self.root_ph.get_page_num();
+        }
+    }
+    
+    fn create_new_node(&mut self, is_leaf: bool) -> Result<PageHandle, IndexError> {
+        let new_ph = match self.pfh.allocate_page() {
+            Err(e) => {
+                dbg!(&e);
+                return Err(IndexError::AllocatePageError);
+            },
+            Ok(v) => v
+        };
+        let new_eh = unsafe {
+            &mut *(new_ph.get_data() as *mut EntryHeader)
+        };
+        new_eh.is_empty = true;
+        new_eh.is_leaf = is_leaf;
+        new_eh.num_keys = 0;
+        new_eh.free_slot = 0;
+        new_eh.first_slot = NO_MORE_SLOTS;
+        new_eh.num1 = 0;
+        new_eh.num2 = 0;
+        
+        let keys = unsafe {
+            let p = new_ph.get_data().offset(self.header.keys_offset as isize);
+            std::slice::from_raw_parts_mut(p, self.max_keys)
+        };
+        let entries = unsafe {
+            let p = new_ph.get_data().offset(self.header.entries_offset as isize);
+            std::slice::from_raw_parts_mut(p, self.max_entries)
+        };
+
+        for i in 0..self.header.max_keys {
+            entries[i].et_type = EntryType::Unoccupied;
+            entries[i].page_num = 0;//0 is an invalid page num
+            if i == self.header.max_keys - 1 {
+                entries[i].next_slot = NO_MORE_SLOTS;
+            } else {
+                entries[i].next_slot = i+1;
+            }
+        }
+        
+        match self.pfh.unpin_dirty_page(new_ph.get_page_num()) {
+            Err(e) => {
+                dbg!(&e);
+                Err(IndexError::UnpinPageError)
+            },
+            Ok(_) => Ok(new_ph)
+        }
+    }
+
+    fn create_new_bucket(&mut self) -> Result<PageHandle, IndexError> {
+        let ph = match self.pfh.allocate_page() {
+            Err(e) => {
+                dbg!(&e);
+                return Err(IndexError::AllocatePageError);
+            },
+            Ok(v) => v
+        };
+        let bucket_header = unsafe {
+            &mut *(ph.get_data() as *mut BucketHeader)
+        };
+        
+        bucket_header.num_keys = 0;
+        bucket_header.free_slot = 0;
+        bucket_header.first_slot = NO_MORE_SLOTS;
+        bucket_header.next_bucket = 0;
+
+        let entries = unsafe {
+            let p = ph.get_data().offset(self.header.bucket_entries_offset as isize) as *mut BucketEntry;
+            std::slice::from_raw_parts_mut(p, self.header.max_bucket_entries)
+        };
+
+        for i in 0..(self.header.max_bucket_entries) {
+            entries[i].page_num = 0;
+            if i == self.header.max_bucket_entries - 1 {
+                entries[i].next_slot = NO_MORE_SLOTS;
+            } else {
+                entries[i].next_slot = (i+1) as u32;
+            }
+        }
+
+        match self.pfh.unpin_dirty_page(ph.get_page_num()) {
+            Err(e) => {
+                dbg!(e);
+                Err(IndexError::UnpinPageError)
+            },
+            Ok(_) => Ok(ph)
+        }
+    }
+}

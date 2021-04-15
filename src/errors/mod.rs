@@ -96,4 +96,5 @@ pub enum IndexingError {
     IncompleteWrite,
     IncompleteRead,
     FileExist,
+    AllocatePageError,
 }

@@ -23,24 +23,16 @@ use std::io::ErrorKind;
 
 #[derive(Debug)]
 pub struct IndexFileManager {
-    num_files: u16,
-    fps: HashMap<String, File>
 }
 
 impl IndexFileManager {
-    pub fn new(num_files: u16) -> Self {
-        Self {
-            num_files,
-            fps: HashMap::new()
-        }
-    }
     /*
      * open a file, if the file not found, create one.
      *
      * index_num is for helping create the name of the index file, in 
      * case of duplicate names.
      */
-    pub fn open_file(&mut self, file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
+    pub fn open_file(file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
         if let Some(_) = self.fps.get(file_name) {
             return Err(IndexingError::FileExist);
         }
