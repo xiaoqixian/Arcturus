@@ -13,11 +13,11 @@
  */
 
 use crate::page_management::page_file::{PageFileManager, PageFileHeader};
-use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::collections::HashMap;
 use std::mem::size_of;
 use super::AttrType;
+use super::index_handle::{IndexHandle};
 use crate::errors::IndexingError;
 use std::io::ErrorKind;
 
@@ -32,10 +32,7 @@ impl IndexFileManager {
      * index_num is for helping create the name of the index file, in 
      * case of duplicate names.
      */
-    pub fn open_file(file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
-        if let Some(_) = self.fps.get(file_name) {
-            return Err(IndexingError::FileExist);
-        }
+    pub fn open_file(file_name: &String, index_num: u32, pfm: &mut PageFileManager,  attr_type: AttrType, attr_length: usize) -> Result<IndexHandle, IndexingError> {
         if !Self::check_attr_validity(attr_type, attr_length) {
             dbg!(&(attr_type, attr_length));
             return Err(IndexingError::InvalidAttr);
@@ -43,6 +40,44 @@ impl IndexFileManager {
 
         let mut new_name = file_name.clone();
         new_name.push_str(&index_num.to_string());
+        
+        let mut pfh = match pfm.open_file(&new_name) {
+            Err(e) => {
+                dbg!(&e);
+                return Err(IndexingError::FileOpenError);
+            },
+            Ok(v) => v
+        };
+        
+        let header_ph = match pfh.get_first_page() {
+            Err(e) => {
+                dbg!(&e);
+                return Err(IndexingError::GetFirstPageError);
+            },
+            Ok(v) => v
+        };
+
+        let header = unsafe {
+            & *(header_ph.get_data() as *const IndexFileHeader)
+        };
+
+        let root_ph = match pfh.allocate_page() {
+            Err(e) => {
+                dbg!(e);
+                return Err(IndexingError::AllocatePageError);
+            },
+            Ok(v) => v
+        };
+
+        Ok(IndexHandle::new(pfh, header, root_ph))
+    }
+
+
+    pub fn open_file(file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
+        if let Some(_) = self.fps.get(file_name) {
+            return Err(IndexingError::FileExist);
+        }
+
         
         let mut fp: File;
         match File::open(&new_name) {

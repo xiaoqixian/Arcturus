@@ -132,24 +132,34 @@
 
 use super::AttrType;
 use crate::page_management::page_file::{PageHandle, PageFileHandle};
-use crate::errors::{IndexError, Error};
+use crate::errors::{IndexingError, Error};
+use crate::utils;
+use std::cmp::Ordering;
+use crate::record_management::record_file_handle::{RID};
 
 const NO_MORE_SLOTS: u32 = 0xffffffff;//as 0 is a valid slot num, so we use 0xffffffff to represent a invalid slot_num.
+const BEGINNING_OF_SLOT: u32 = 0xfffffffe;
 
+#[derive(Debug, Copy, Clone)]
 pub struct IndexFileHeader {
     num_entries: usize,
     attr_length: usize,
     attr_type: AttrType,
     
     keys_offset: usize,
-    entries_offset: usize,
+    node_entries_offset: usize,
+    bucket_entries_offset: usize,
 
     max_keys: usize,
-    max_entries: usize,
+    max_node_entries: usize,
+    max_bucket_entries: usize,
 
-    root_page: u32
+    root_page: u32,
+
+    //comparator: fn(val1: &T, val2: &T) -> std::cmp::Ordering
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct EntryHeader {
     is_leaf: bool,
     is_empty: bool,
@@ -162,6 +172,7 @@ pub struct EntryHeader {
     num2: u32, 
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct LeafHeader {
     is_leaf: bool,
     is_empty: bool,
@@ -174,6 +185,7 @@ pub struct LeafHeader {
     next_page: u32
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct InternalHeader {
     is_leaf: bool,
     is_empty: bool,
@@ -186,6 +198,7 @@ pub struct InternalHeader {
     num2: u32
 }
 
+#[derive(Debug, Copy, Clone)]
 struct BucketHeader {
     num_keys: usize,
     free_slot: u32,
@@ -193,12 +206,14 @@ struct BucketHeader {
     next_bucket: u32
 }
 
+#[derive(Debug, Copy, Clone)]
 enum EntryType {
     Unoccupied,
     New,
     Duplicate,//set when an index entry with a same value is inserted. At that time, the entry is linekd to a bucket which contains all relative RIDs.
 }
 
+#[derive(Debug, Copy, Clone)]
 struct NodeEntry {
     et_type: EntryType,
     next_slot: u32,//points to the next entry in the node.
@@ -206,19 +221,35 @@ struct NodeEntry {
     slot_num: u32,//if this is a duplicate entry, the page_num is set to be the bucket page num.
 }
 
+#[derive(Debug, Copy, Clone)]
 struct BucketEntry {
     next_slot: u32,
     page_num: u32,
     slot_num: u32,
 }
 
+/*
+ * As we have three value types to consider about, we use generics to write a 
+ * general handle. 
+ */
+#[derive(Debug)]
 pub struct IndexHandle {
     header: IndexFileHeader,
     header_changed: bool,
+    pfh: PageFileHandle,
     root_ph: PageHandle //PageHandle associated with the root page.
 }
 
 impl IndexHandle {
+    pub fn new(pfh: &mut PageFileHandle, header: &IndexFileHeader, root_ph: PageHandle) -> Self {
+        Self {
+            header: *header,
+            header_changed: false,
+            pfh: pfh.clone(),
+            root_ph,
+        }
+    }
+
     pub fn insert_entry(&mut self, data: *mut u8, rid: &RID) -> Result<(), Error> {
         let root_header = unsafe {
             &mut *(self.root_ph.get_data() as *mut EntryHeader)
@@ -226,25 +257,27 @@ impl IndexHandle {
         
         //if the root page is full.
         if root_header.num_keys == self.header.max_keys {
-            let new_ph = match self.create_new_node() {
+            let new_ph = match self.create_new_node(false) {
                 Err(e) => {
-                    return Err(e);
+                    dbg!(&e);
+                    return Err(Error::CreateNewNodeError);
                 },
                 Ok(v) => v
             };
             let new_root_header = unsafe {
-                &mut *(new_ph.get_data() as *mut EntryHeader)
+                &mut *(new_ph.get_data() as *mut InternalHeader)
             };
             new_root_header.is_empty = false;
             new_root_header.first_child = self.root_ph.get_page_num();
         }
+        Ok(())
     }
     
-    fn create_new_node(&mut self, is_leaf: bool) -> Result<PageHandle, IndexError> {
+    fn create_new_node(&mut self, is_leaf: bool) -> Result<PageHandle, IndexingError> {
         let new_ph = match self.pfh.allocate_page() {
             Err(e) => {
                 dbg!(&e);
-                return Err(IndexError::AllocatePageError);
+                return Err(IndexingError::AllocatePageError);
             },
             Ok(v) => v
         };
@@ -259,14 +292,7 @@ impl IndexHandle {
         new_eh.num1 = 0;
         new_eh.num2 = 0;
         
-        let keys = unsafe {
-            let p = new_ph.get_data().offset(self.header.keys_offset as isize);
-            std::slice::from_raw_parts_mut(p, self.max_keys)
-        };
-        let entries = unsafe {
-            let p = new_ph.get_data().offset(self.header.entries_offset as isize);
-            std::slice::from_raw_parts_mut(p, self.max_entries)
-        };
+        let entries = self.get_node_entries(new_ph.get_data());
 
         for i in 0..self.header.max_keys {
             entries[i].et_type = EntryType::Unoccupied;
@@ -274,40 +300,37 @@ impl IndexHandle {
             if i == self.header.max_keys - 1 {
                 entries[i].next_slot = NO_MORE_SLOTS;
             } else {
-                entries[i].next_slot = i+1;
+                entries[i].next_slot = (i+1) as u32;
             }
         }
         
         match self.pfh.unpin_dirty_page(new_ph.get_page_num()) {
             Err(e) => {
                 dbg!(&e);
-                Err(IndexError::UnpinPageError)
+                Err(IndexingError::UnpinPageError)
             },
             Ok(_) => Ok(new_ph)
         }
     }
 
-    fn create_new_bucket(&mut self) -> Result<PageHandle, IndexError> {
-        let ph = match self.pfh.allocate_page() {
+    fn create_new_bucket(&mut self) -> Result<PageHandle, IndexingError> {
+        let new_ph = match self.pfh.allocate_page() {
             Err(e) => {
                 dbg!(&e);
-                return Err(IndexError::AllocatePageError);
+                return Err(IndexingError::AllocatePageError);
             },
             Ok(v) => v
         };
-        let bucket_header = unsafe {
-            &mut *(ph.get_data() as *mut BucketHeader)
+        let new_bh = unsafe {
+            &mut *(new_ph.get_data() as *mut BucketHeader)
         };
         
-        bucket_header.num_keys = 0;
-        bucket_header.free_slot = 0;
-        bucket_header.first_slot = NO_MORE_SLOTS;
-        bucket_header.next_bucket = 0;
+        new_bh.num_keys = 0;
+        new_bh.free_slot = 0;
+        new_bh.first_slot = NO_MORE_SLOTS;
+        new_bh.next_bucket = 0;
 
-        let entries = unsafe {
-            let p = ph.get_data().offset(self.header.bucket_entries_offset as isize) as *mut BucketEntry;
-            std::slice::from_raw_parts_mut(p, self.header.max_bucket_entries)
-        };
+        let entries = self.get_bucket_entries(new_ph.get_data());
 
         for i in 0..(self.header.max_bucket_entries) {
             entries[i].page_num = 0;
@@ -318,12 +341,99 @@ impl IndexHandle {
             }
         }
 
-        match self.pfh.unpin_dirty_page(ph.get_page_num()) {
+        match self.pfh.unpin_dirty_page(new_ph.get_page_num()) {
             Err(e) => {
                 dbg!(e);
-                Err(IndexError::UnpinPageError)
+                Err(IndexingError::UnpinPageError)
             },
-            Ok(_) => Ok(ph)
+            Ok(_) => Ok(new_ph)
         }
+    }
+
+    /*
+     * Find an appropriate insert index for an entry with a key whose value is val.
+     * If success, return a tuple, usize represents the index, bool represents if 
+     * the index entry is a duplicate one.
+     *
+     * Keys and entries are both arrays, and associated elements are at same index.
+     */
+    fn find_node_insert_index(&mut self, val: *mut u8, node_data: *mut u8) -> Result<(usize, bool), IndexingError> {
+        let node_entries = self.get_node_entries(node_data);
+        let keys = unsafe {
+            node_data.offset(self.header.keys_offset as isize)
+        };
+        let entry_header = unsafe {
+            &mut *(node_data as *mut EntryHeader)
+        };
+        
+        let mut prev_index = BEGINNING_OF_SLOT as usize;
+        let mut curr_index = entry_header.first_slot as usize;
+        let mut is_dup = false;
+
+        let mut ptr: *mut u8;
+
+        while curr_index != NO_MORE_SLOTS as usize {
+            ptr = unsafe {
+                keys.offset((self.header.attr_length * curr_index) as isize)
+            };
+            match Self::compare(val, ptr, self.header.attr_type, self.header.attr_length) {
+                Ordering::Greater => {},
+                Ordering::Less => {
+                    break;
+                },
+                Ordering::Equal => {
+                    is_dup = true;
+                }
+            }
+            prev_index = curr_index;
+            curr_index = node_entries[curr_index].next_slot as usize;
+        }
+        Ok((prev_index, is_dup))
+    }
+
+    fn compare(val1: *mut u8, val2: *mut u8, attr_type: AttrType, len: usize) -> Ordering {
+        match attr_type {
+            AttrType::INT => {
+                let v1 = unsafe {
+                    & *(val1 as *mut i32)
+                };
+                let v2 = unsafe {
+                    & *(val2 as *mut i32)
+                };
+                v1.cmp(v2)
+            },
+            AttrType::FLOAT => {
+                let v1 = unsafe {
+                    *(val1 as *mut f32)
+                };
+                let v2 = unsafe {
+                    *(val2 as *mut f32)
+                };
+                if v1 < v2 {
+                    Ordering::Less
+                } else if v1 == v2 {
+                    Ordering::Equal
+                } else {
+                    Ordering::Greater
+                }
+            },
+            AttrType::STRING => {
+                let v1 = unsafe {
+                    std::mem::ManuallyDrop::new(String::from_raw_parts(val1, len, len))
+                };
+                let v2 = unsafe {
+                    std::mem::ManuallyDrop::new(String::from_raw_parts(val2, len, len))
+                };
+                v1.cmp(&v2)
+            }
+        }
+    }
+
+    fn get_node_entries(&self, data: *mut u8) -> &'static mut [NodeEntry] {
+        utils::get_arr_mut::<NodeEntry>(data, self.header.node_entries_offset, self.header.max_node_entries)
+    }
+
+    fn get_bucket_entries(&self, data: *mut u8) -> &'static mut [BucketEntry] {
+        utils::get_arr_mut::<BucketEntry>(data, self.header.bucket_entries_offset, self.header.max_bucket_entries)
     }
 }

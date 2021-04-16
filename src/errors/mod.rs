@@ -37,7 +37,7 @@ pub enum Error {
     FindFreeSlotError,
 
     //indexing module
-    
+    CreateNewNodeError,
 }
 
 #[derive(Debug)]
@@ -97,4 +97,6 @@ pub enum IndexingError {
     IncompleteRead,
     FileExist,
     AllocatePageError,
+    CreateNewNodeError,
+    UnpinPageError,
 }
