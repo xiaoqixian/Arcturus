@@ -272,6 +272,80 @@ impl IndexHandle {
         }
         Ok(())
     }
+
+    fn insert_into_nonfull_node(&mut self, node: PageHandle, key_val: *mut u8, rid: &RID) -> Result<(), IndexingError> {
+        let node_header = unsafe {
+            &mut *(node.get_data() as *mut EntryHeader)
+        };
+        let entries = self.get_node_entries(node.get_data());
+        let keys = unsafe {
+            node.get_data().offset(self.header.keys_offset as isize)
+        };
+
+        if node_header.is_leaf {
+            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node.get_data()) {
+                Err(e) => {
+                    dbg!(&e);
+                    return Err(IndexingError::FindInsertIndexError);
+                },
+                Ok((a, b)) => (a, b)
+            };
+
+            if !is_dup {
+                //copy key_val to keys
+                let index = node_header.free_slot as usize;
+                unsafe {
+                    std::ptr::copy(key_val, keys.offset((index * self.header.attr_length) as isize), self.header.attr_length);
+                }
+                node_header.is_empty = false;
+                node_header.num_keys += 1;
+                node_header.free_slot = entries[index].next_slot;
+
+                entries[index].et_type = EntryType::New;
+                entries[index].page_num = rid.get_page_num();
+                entries[index].slot_num = rid.get_slot_num();
+
+                if prev_index == BEGINNING_OF_SLOT {
+                    entries[index].next_slot = NO_MORE_SLOTS;
+                    node_header.first_slot = index as u32;
+                } else {
+                    entries[index].next_slot = entries[prev_index].next_slot;
+                    entries[prev_index].next_slot = index as u32;
+                }
+
+            } else {
+                let prev_entry = &mut entries[prev_index];
+                match prev_entry.et_type {
+                    EntryType::Unoccupied => {
+                        dbg!(&prev_entry);
+                        return Err(IndexingError::AbnormalEntryType);
+                    },
+                    EntryType::New => {
+                        let bucket_ph = match self.create_new_bucket() {
+                            Err(e) => {
+                                return Err(e);
+                            },
+                            Ok(v) => v
+                        };
+                        match self.insert_into_bucket(&bucket_ph, rid) {
+                            Err(e) => {
+                                return Err(e);
+                            },
+                            Ok(_) => {}
+                        }
+                        match self.insert_into_bucket(&bucket_ph, RID::new(prev_entry.page_num, prev_entry.slot_num)) {
+                            Err(e) => {
+                                return Err(e);
+                            },
+                            Ok(_) => {}
+                        }
+                        prev_entry.et_type = EntryType::Duplicate;
+                        prev_entry.page_num = bucket_ph.get_page_num();
+                    }
+                }
+            }
+        }
+    }
     
     fn create_new_node(&mut self, is_leaf: bool) -> Result<PageHandle, IndexingError> {
         let new_ph = match self.pfh.allocate_page() {
