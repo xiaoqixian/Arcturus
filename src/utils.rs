@@ -46,3 +46,17 @@ pub fn get_arr_mut<T>(p: *mut u8, offset: usize, len: usize) -> &'static mut [T]
         std::slice::from_raw_parts_mut(ap, len)
     }
 }
+
+//get header from a raw pointer. offset is 0 by default
+//this is generic function.
+pub fn get_header<T>(data: *mut u8) -> &T {
+    unsafe {
+        & *(data as *const T)
+    }
+}
+
+pub fn get_header_mut<T>(data: *mut u8) -> &mut T {
+    unsafe {
+        &mut *(data as *mut T)
+    }
+}

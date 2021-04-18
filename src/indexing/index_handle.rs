@@ -139,6 +139,7 @@ use crate::record_management::record_file_handle::{RID};
 
 const NO_MORE_SLOTS: u32 = 0xffffffff;//as 0 is a valid slot num, so we use 0xffffffff to represent a invalid slot_num.
 const BEGINNING_OF_SLOT: u32 = 0xfffffffe;
+const NO_MORE_PAGES: u32 = 0;
 
 #[derive(Debug, Copy, Clone)]
 pub struct IndexFileHeader {
@@ -327,6 +328,8 @@ impl IndexHandle {
                             },
                             Ok(v) => v
                         };
+                        //insert_into_bucket is in charge of unpinning the page
+                        //no matter if it's dirty or not.
                         match self.insert_into_bucket(&bucket_ph, rid) {
                             Err(e) => {
                                 return Err(e);
@@ -345,6 +348,64 @@ impl IndexHandle {
                 }
             }
         }
+    }
+
+    /*
+     * Insert a rid into a bucket, entries related to a same index value have
+     * no relations.
+     */
+    fn insert_into_bucket(&mut self, mut ph: &PageHandle, rid: RID) -> Result<(), IndexingError> {
+        /*
+         * TODO
+         * In original code, here's the part that traverses all buckets just to 
+         * make sure no entry with a same rid is already inserted.
+         * I think it's a little unnessary, so I just leave it aside for now.
+         */
+        let mut curr_page: u32 = ph.get_page_num();
+        let mut next_page: u32;
+        let mut flag = true;
+        while flag {
+            let mut bucket_entries = self.get_bucket_entries(ph.get_data());
+            let mut bucket_header = utils::get_header_mut::<BucketHeader>(ph.get_data());
+            if bucket_header.next_bucket == NO_MORE_PAGES && bucket_header.num_keys == self.header.max_bucket_entries {
+                flag = false;
+                let new_ph = match self.create_new_bucket() {
+                    Err(e) => {
+                        return Err(e);
+                    },
+                    Ok(v) => v
+                };
+                bucket_header.next_bucket = new_ph.get_page_num();
+                if let Err(e) = match self.pfh.unpin_dirty_page(ph.get_page_num()) {
+                    return Err(e);
+                }
+
+                bucket_entries = self.get_bucket_entries(new_ph.get_data());
+                bucket_header = utils::get_header_mut::<BucketHeader>(new_ph.get_data());
+                ph = new_ph;
+            }
+
+            if bucket_header.next_bucket == NO_MORE_PAGES {
+                let loc = bucket_header.free_slot;
+                bucket_entries[loc].page_num = rid.get_page_num();
+                bucket_entries[loc].slot_num = rid.get_slot_num();
+                bucket_header.free_slot = bucket_entries[loc].next_slot;
+                bucket_entries[loc].next_slot = bucket_header.first_slot;
+                bucket_header.first_slot = loc;
+                bucket_header.num_keys += 1;
+                if let Err(e) = self.pfh.unpin_dirty_page(ph.get_page_num()) {
+                    return Err(e);
+                }
+            }
+
+            ph = match self.pfh.get_page(bucket_header.next_bucket) {
+                Err(e) => {
+                    return Err(e);
+                },
+                Ok(v) => v
+            };
+        }
+        Ok(())
     }
     
     fn create_new_node(&mut self, is_leaf: bool) -> Result<PageHandle, IndexingError> {
@@ -387,6 +448,11 @@ impl IndexHandle {
         }
     }
 
+    /*
+     * Every time a duplicate entry appears, a new page is allocated.
+     * And all rids associated with these duplicate entries are stored in this page.
+     * If one page is full, allocate another one.
+     */
     fn create_new_bucket(&mut self) -> Result<PageHandle, IndexingError> {
         let new_ph = match self.pfh.allocate_page() {
             Err(e) => {
