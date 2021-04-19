@@ -97,6 +97,9 @@ pub enum IndexingError {
     IncompleteRead,
     FileExist,
     AllocatePageError,
+    GetPageError,
     CreateNewNodeError,
     UnpinPageError,
+    FindInsertIndexError,
+    AbnormalEntryType,
 }

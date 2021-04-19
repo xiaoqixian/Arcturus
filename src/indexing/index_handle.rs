@@ -275,9 +275,7 @@ impl IndexHandle {
     }
 
     fn insert_into_nonfull_node(&mut self, node: PageHandle, key_val: *mut u8, rid: &RID) -> Result<(), IndexingError> {
-        let node_header = unsafe {
-            &mut *(node.get_data() as *mut EntryHeader)
-        };
+        let node_header = utils::get_header_mut::<EntryHeader>(node.get_data());
         let entries = self.get_node_entries(node.get_data());
         let keys = unsafe {
             node.get_data().offset(self.header.keys_offset as isize)
@@ -344,8 +342,49 @@ impl IndexHandle {
                         }
                         prev_entry.et_type = EntryType::Duplicate;
                         prev_entry.page_num = bucket_ph.get_page_num();
+                    },
+                    EntryType::Duplicate => {
+                        let bucket_ph = match self.pfh.get_page(prev_entry.page_num) {
+                            Err(e) => {
+                                dbg!(&e);
+                                return Err(IndexingError::GetPageError);
+                            },
+                            Ok(v) => v
+                        };
+                        if let Err(e) = match self.insert_into_bucket(&bucket_ph, rid) {
+                            return Err(e);
+                        }
                     }
                 }
+            }
+        } else {//if it's an internal node.\
+            let mut next_node: u32;//next level node to call this method.
+            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node.get_data()) {
+                Err(e) => {
+                    return Err(e);
+                },
+                Ok(v) => v
+            };
+            let node_header = utils::get_header_mut::<InternalHeader>(node.get_data());
+            if prev_index == BEGINNING_OF_SLOT {
+                //connect to the first child node.
+                next_node = node_header.first_child;
+            } else {
+                next_node = entries[prev_index].page_num;//page number of internal node entry stores the page number of the node it points to.
+            }
+
+            let next_node_ph = match self.pfh.get_page(next_node) {
+                Err(e) => {
+                    dbg!(&e);
+                    return Err(IndexingError::GetPageError);
+                },
+                Ok(v) => v
+            };
+            let next_node_header = utils::get_header::<EntryHeader>(next_node_ph.get_data());
+            
+            if next_node_header.num_keys == self.header.max_keys {
+                //if the next node is full, we need to split the next node.
+                
             }
         }
     }
@@ -355,16 +394,14 @@ impl IndexHandle {
      * no relations.
      */
     fn insert_into_bucket(&mut self, mut ph: &PageHandle, rid: RID) -> Result<(), IndexingError> {
-        /*
-         * TODO
-         * In original code, here's the part that traverses all buckets just to 
-         * make sure no entry with a same rid is already inserted.
-         * I think it's a little unnessary, so I just leave it aside for now.
-         */
-        let mut curr_page: u32 = ph.get_page_num();
-        let mut next_page: u32;
         let mut flag = true;
         while flag {
+            /*
+             * TODO
+             * In original code, here's the part that traverses all buckets just to 
+             * make sure no entry with a same rid is already inserted.
+             * I think it's a little unnessary, so I just leave it aside for now.
+             */
             let mut bucket_entries = self.get_bucket_entries(ph.get_data());
             let mut bucket_header = utils::get_header_mut::<BucketHeader>(ph.get_data());
             if bucket_header.next_bucket == NO_MORE_PAGES && bucket_header.num_keys == self.header.max_bucket_entries {
@@ -407,8 +444,85 @@ impl IndexHandle {
         }
         Ok(())
     }
+
+    /*
+     * split a node, what we need:
+     *   1. parent_ph: parent node PageHandle
+     *   2. full_ph: PageHandle of the full node to split.
+     *   3. is_leaf: is the full node a leaf node.
+     * returns:
+     *   1. page number of the new node.
+     */
+    fn split_node(&mut self, parent_ph: PageHandle, full_ph: PageHandle, is_leaf: bool) -> Result<(usize), IndexingError> {
+        let parent_header = utils::get_header_mut::<InternalHeader>();
+        
+        let new_ph = match self.create_new_node(&is_leaf) {
+            Err(e) => {
+                return  Err(e);
+            },
+            Ok(v) => v
+        };
+
+        let full_header = utils::get_header_mut::<EntryHeader>(full_ph.get_data());
+        let new_header = utils::get_header_mut::<EntryHeader>(new_ph.get_data());
+        
+        let new_entries = self.get_node_entries(new_ph.get_data());
+        let full_entries = self.get_node_entries(full_ph.get_data());
+        let new_keys = unsafe {
+            new_ph.get_data().offset(self.header.keys_offset as isize)
+        };
+        let full_keys = unsafe {
+            full_ph.get_data().offset(self.header.keys_offset as isize)
+        };
+        let parent_keys = unsafe {
+            parent_ph.get_data().offset(self.header.keys_offset as isize)
+        };
+
+        /*
+         * move self.header.max_keys/2 number of entries and keys to the new node.
+         */
+        let mut prev_index: usize = BEGINNING_OF_SLOT as usize;
+        let mut curr_index: usize = full_header.first_slot as usize;
+        for i in 0..(self.header.max_keys/2) {
+            prev_index = curr_index;
+            curr_index = full_entries[curr_index].next_slot as usize;
+        }
+        full_entries[prev_index].next_slot = NO_MORE_SLOTS;
+
+        //find the key to insert into the parent node.
+        let parent_key = unsafe {
+            full_keys.offset((curr_index * self.header.attr_length) as isize)
+        };
+
+        /*
+         * now, the node that curr_index points to is an edge node.
+         * we need to insert it into the new node and the parent node, 
+         * then remove it from the full node or I could say old node.
+         * 
+         * Above actions is only taken when it's an internal node.
+         */
+        if !is_leaf {
+            let new_header = utils::get_header_mut::<InternalHeader>(new_ph.get_data());
+            new_header.first_child = full_entries[curr_index].page_num;
+            new_header.is_empty = false;
+            //unlink curr_index from the old node
+            prev_index = curr_index;
+            curr_index = full_entries[prev_index].next_slot;
+            full_entries[prev_index].next_slot = full_header.free_slot;
+            full_header.free_slot = prev_index as u32;
+            full_header.num_keys -= 1;
+        }
+
+        //now we remove all the remaining entries to the new node.
+        //prev_index2 and curr_index2 gonna be used in the new node.
+        let mut prev_index2 = BEGINNING_OF_SLOT as usize;
+        let mut curr_index2 = new_header.free_slot as usize;
+        while curr_index != NO_MORE_SLOTS {
+
+        }
+    }
     
-    fn create_new_node(&mut self, is_leaf: bool) -> Result<PageHandle, IndexingError> {
+    fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
         let new_ph = match self.pfh.allocate_page() {
             Err(e) => {
                 dbg!(&e);
