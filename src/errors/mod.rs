@@ -38,6 +38,7 @@ pub enum Error {
 
     //indexing module
     CreateNewNodeError,
+    InsertIntoNonFullNodeError
 }
 
 #[derive(Debug)]

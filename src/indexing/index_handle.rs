@@ -161,7 +161,7 @@ pub struct IndexFileHeader {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct EntryHeader {
+pub struct NodeHeader {
     is_leaf: bool,
     is_empty: bool,
 
@@ -251,31 +251,51 @@ impl IndexHandle {
         }
     }
 
-    pub fn insert_entry(&mut self, data: *mut u8, rid: &RID) -> Result<(), Error> {
-        let root_header = unsafe {
-            &mut *(self.root_ph.get_data() as *mut EntryHeader)
-        };
+    /*
+     * insert an entry with key value = key_val, and associated RID = rid.
+     */
+    pub fn insert_entry(&mut self, key_val: *mut u8, rid: &RID) -> Result<(), Error> {
+        let root_header = utils::get_header_mut::<NodeHeader>(self.root_ph.get_data());
         
         //if the root page is full.
         if root_header.num_keys == self.header.max_keys {
-            let new_ph = match self.create_new_node(false) {
+            let new_root_ph = match self.create_new_node(false) {
                 Err(e) => {
                     dbg!(&e);
                     return Err(Error::CreateNewNodeError);
                 },
                 Ok(v) => v
             };
-            let new_root_header = unsafe {
-                &mut *(new_ph.get_data() as *mut InternalHeader)
-            };
+            let new_root_header = utils::get_header_mut::<InternalHeader>(new_root_ph.get_data());
             new_root_header.is_empty = false;
             new_root_header.first_child = self.root_ph.get_page_num();
+
+            //split the original root node.
+            if let Err(e) = self.split_node(new_root_ph, self.root_ph, root_header.is_leaf, BEGINNING_OF_SLOT) {
+                return Err(e);
+            }
+
+            if let Err(e) = self.pfh.unpin_dirty_page(self.root_ph.get_page_num()) {
+                return Err(e);
+            }
+
+            self.root_ph = new_root_ph;
+            self.header.root_page = new_root_ph.get_page_num();
+            self.header_changed = true;
+
         }
-        Ok(())
+
+        match self.insert_into_nonfull_node(self.root_ph, key_val, rid) {
+            Err(e) => {
+                dbg!(&e);
+                Err(Error::InsertIntoNonFullNodeError)
+            },
+            Ok(_) => Ok(())
+        }
     }
 
     fn insert_into_nonfull_node(&mut self, node_ph: PageHandle, key_val: *mut u8, rid: &RID) -> Result<(), IndexingError> {
-        let node_header = utils::get_header_mut::<EntryHeader>(node_ph.get_data());
+        let node_header = utils::get_header_mut::<NodeHeader>(node_ph.get_data());
         let entries = self.get_node_entries(node_ph.get_data());
         let keys = unsafe {
             node_ph.get_data().offset(self.header.keys_offset as isize)
@@ -380,7 +400,7 @@ impl IndexHandle {
                 },
                 Ok(v) => v
             };
-            let next_node_header = utils::get_header::<EntryHeader>(next_node_ph.get_data());
+            let next_node_header = utils::get_header::<NodeHeader>(next_node_ph.get_data());
             
             if next_node_header.num_keys == self.header.max_keys {
                 //if the next node is full, we need to split the next node.
@@ -505,8 +525,8 @@ impl IndexHandle {
             Ok(v) => v
         };
 
-        let full_header = utils::get_header_mut::<EntryHeader>(full_ph.get_data());
-        let new_header = utils::get_header_mut::<EntryHeader>(new_ph.get_data());
+        let full_header = utils::get_header_mut::<NodeHeader>(full_ph.get_data());
+        let new_header = utils::get_header_mut::<NodeHeader>(new_ph.get_data());
         
         let new_entries = self.get_node_entries(new_ph.get_data());
         let full_entries = self.get_node_entries(full_ph.get_data());
@@ -644,16 +664,16 @@ impl IndexHandle {
             },
             Ok(v) => v
         };
-        let new_eh = unsafe {
-            &mut *(new_ph.get_data() as *mut EntryHeader)
+        let new_nh = unsafe {
+            &mut *(new_ph.get_data() as *mut NodeHeader)
         };
-        new_eh.is_empty = true;
-        new_eh.is_leaf = is_leaf;
-        new_eh.num_keys = 0;
-        new_eh.free_slot = 0;
-        new_eh.first_slot = NO_MORE_SLOTS;
-        new_eh.num1 = 0;
-        new_eh.num2 = 0;
+        new_nh.is_empty = true;
+        new_nh.is_leaf = is_leaf;
+        new_nh.num_keys = 0;
+        new_nh.free_slot = 0;
+        new_nh.first_slot = NO_MORE_SLOTS;
+        new_nh.num1 = 0;
+        new_nh.num2 = 0;
         
         let entries = self.get_node_entries(new_ph.get_data());
 
@@ -730,12 +750,12 @@ impl IndexHandle {
         let keys = unsafe {
             node_data.offset(self.header.keys_offset as isize)
         };
-        let entry_header = unsafe {
-            &mut *(node_data as *mut EntryHeader)
+        let node_header = unsafe {
+            &mut *(node_data as *mut NodeHeader)
         };
         
         let mut prev_index = BEGINNING_OF_SLOT;
-        let mut curr_index = entry_header.first_slot;
+        let mut curr_index = node_header.first_slot;
         let mut is_dup = false;
 
         let mut ptr: *mut u8;
