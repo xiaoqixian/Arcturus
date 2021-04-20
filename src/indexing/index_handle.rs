@@ -137,8 +137,8 @@ use crate::utils;
 use std::cmp::Ordering;
 use crate::record_management::record_file_handle::{RID};
 
-const NO_MORE_SLOTS: u32 = 0xffffffff;//as 0 is a valid slot num, so we use 0xffffffff to represent a invalid slot_num.
-const BEGINNING_OF_SLOT: u32 = 0xfffffffe;
+const NO_MORE_SLOTS: usize = 1<<32;//as 0 is a valid slot num, so we use 1<<32 to represent a invalid slot_num.
+const BEGINNING_OF_SLOT: usize = 1<<32 + 1;
 const NO_MORE_PAGES: u32 = 0;
 
 #[derive(Debug, Copy, Clone)]
@@ -274,15 +274,15 @@ impl IndexHandle {
         Ok(())
     }
 
-    fn insert_into_nonfull_node(&mut self, node: PageHandle, key_val: *mut u8, rid: &RID) -> Result<(), IndexingError> {
-        let node_header = utils::get_header_mut::<EntryHeader>(node.get_data());
-        let entries = self.get_node_entries(node.get_data());
+    fn insert_into_nonfull_node(&mut self, node_ph: PageHandle, key_val: *mut u8, rid: &RID) -> Result<(), IndexingError> {
+        let node_header = utils::get_header_mut::<EntryHeader>(node_ph.get_data());
+        let entries = self.get_node_entries(node_ph.get_data());
         let keys = unsafe {
-            node.get_data().offset(self.header.keys_offset as isize)
+            node_ph.get_data().offset(self.header.keys_offset as isize)
         };
 
         if node_header.is_leaf {
-            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node.get_data()) {
+            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node_ph.get_data()) {
                 Err(e) => {
                     dbg!(&e);
                     return Err(IndexingError::FindInsertIndexError);
@@ -306,10 +306,10 @@ impl IndexHandle {
 
                 if prev_index == BEGINNING_OF_SLOT {
                     entries[index].next_slot = NO_MORE_SLOTS;
-                    node_header.first_slot = index as u32;
+                    node_header.first_slot = index;
                 } else {
                     entries[index].next_slot = entries[prev_index].next_slot;
-                    entries[prev_index].next_slot = index as u32;
+                    entries[prev_index].next_slot = index;
                 }
 
             } else {
@@ -351,7 +351,7 @@ impl IndexHandle {
                             },
                             Ok(v) => v
                         };
-                        if let Err(e) = match self.insert_into_bucket(&bucket_ph, rid) {
+                        if let Err(e) = self.insert_into_bucket(&bucket_ph, rid) {
                             return Err(e);
                         }
                     }
@@ -359,13 +359,13 @@ impl IndexHandle {
             }
         } else {//if it's an internal node.\
             let mut next_node: u32;//next level node to call this method.
-            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node.get_data()) {
+            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node_ph.get_data()) {
                 Err(e) => {
                     return Err(e);
                 },
                 Ok(v) => v
             };
-            let node_header = utils::get_header_mut::<InternalHeader>(node.get_data());
+            let node_header = utils::get_header_mut::<InternalHeader>(node_ph.get_data());
             if prev_index == BEGINNING_OF_SLOT {
                 //connect to the first child node.
                 next_node = node_header.first_child;
@@ -373,7 +373,7 @@ impl IndexHandle {
                 next_node = entries[prev_index].page_num;//page number of internal node entry stores the page number of the node it points to.
             }
 
-            let next_node_ph = match self.pfh.get_page(next_node) {
+            let mut next_node_ph = match self.pfh.get_page(next_node) {
                 Err(e) => {
                     dbg!(&e);
                     return Err(IndexingError::GetPageError);
@@ -384,8 +384,46 @@ impl IndexHandle {
             
             if next_node_header.num_keys == self.header.max_keys {
                 //if the next node is full, we need to split the next node.
-                
+                let (insert_index, new_node_ph) = match self.split_node(node_ph, next_node_ph, next_node_header.is_leaf, prev_index) {
+                    Err(e) => {
+                        return Err(e);
+                    },
+                    Ok(v) => v
+                };
+                let edge_val = unsafe {
+                    keys.offset((insert_index * self.header.attr_length) as isize)
+                };
+                /*
+                 * Compare the key_val with the edge_val.
+                 * If less, goes to the next_node, else goes to the new_node.
+                 */
+                match Self::compare(key_val, edge_val, self.header.attr_type, self.header.attr_length) {
+                    Ordering::Greater | Ordering::Equal => {
+                        if let Err(e) = self.pfh.unpin_dirty_page(next_node_ph.get_page_num()) {
+                            dbg!(&e);
+                            return Err(IndexingError::UnpinPageError);
+                        }
+                        next_node_ph = new_node_ph;
+                    },
+                    Ordering::Less => {
+                        if let Err(e) = self.pfh.unpin_dirty_page(new_node_ph.get_page_num()) {
+                            dbg!(&e);
+                            return Err(IndexingError::UnpinPageError);
+                        }
+                    }
+                }
             }
+            
+            if let Err(e) = self.insert_into_nonfull_node(next_node_ph, key_val, rid) {
+                return Err(e);
+            }
+
+            if let Err(e) = self.pfh.unpin_dirty_page(next_node_ph.get_page_num()) {
+                dbg!(&e);
+                return Err(IndexingError::UnpinPageError);
+            }
+
+            Ok(())
         }
     }
 
@@ -413,7 +451,7 @@ impl IndexHandle {
                     Ok(v) => v
                 };
                 bucket_header.next_bucket = new_ph.get_page_num();
-                if let Err(e) = match self.pfh.unpin_dirty_page(ph.get_page_num()) {
+                if let Err(e) = self.pfh.unpin_dirty_page(ph.get_page_num()) {
                     return Err(e);
                 }
 
@@ -453,10 +491,10 @@ impl IndexHandle {
      *   4. parent_prev_index: previous index of new key, acquired by the method 
      *      find_node_insert_index.
      * returns:
-     *   1. page number of the new node.
-     *   2. the index at which a new key is inserted.
+     *   1. new key insert index in the parent node.
+     *   2. new node PageHandle.
      */
-    fn split_node(&mut self, parent_ph: PageHandle, full_ph: PageHandle, is_leaf: bool, parent_prev_index: usize) -> Result<(usize), IndexingError> {
+    fn split_node(&mut self, parent_ph: PageHandle, full_ph: PageHandle, is_leaf: bool, parent_prev_index: usize) -> Result<(usize, PageHandle), IndexingError> {
         let parent_header = utils::get_header_mut::<InternalHeader>();
         let parent_entries = self.get_node_entries(parent_ph.get_data());
         
@@ -485,11 +523,11 @@ impl IndexHandle {
         /*
          * move self.header.max_keys/2 number of entries and keys to the new node.
          */
-        let mut prev_index: usize = BEGINNING_OF_SLOT as usize;
-        let mut curr_index: usize = full_header.first_slot as usize;
+        let mut prev_index: usize = BEGINNING_OF_SLOT;
+        let mut curr_index: usize = full_header.first_slot;
         for i in 0..(self.header.max_keys/2) {
             prev_index = curr_index;
-            curr_index = full_entries[curr_index].next_slot as usize;
+            curr_index = full_entries[curr_index].next_slot;
         }
         full_entries[prev_index].next_slot = NO_MORE_SLOTS;
 
@@ -513,14 +551,14 @@ impl IndexHandle {
             prev_index = curr_index;
             curr_index = full_entries[prev_index].next_slot;
             full_entries[prev_index].next_slot = full_header.free_slot;
-            full_header.free_slot = prev_index as u32;
+            full_header.free_slot = prev_index;
             full_header.num_keys -= 1;
         }
 
         //now we remove all the remaining entries to the new node.
         //prev_index2 and curr_index2 gonna be used in the new node.
-        let mut prev_index2 = BEGINNING_OF_SLOT as usize;
-        let mut curr_index2 = new_header.free_slot as usize;
+        let mut prev_index2 = BEGINNING_OF_SLOT;
+        let mut curr_index2 = new_header.free_slot;
         while curr_index != NO_MORE_SLOTS {
             new_entries[curr_index2] = full_entries[curr_index];//NodeEntry implemented Copy trait.
             unsafe {
@@ -550,12 +588,12 @@ impl IndexHandle {
         }
         
         //insert the parent_key into the parent node at the index specified in parameters.
-        let loc = parent_header.free_slot as usize;
+        let loc = parent_header.free_slot;
         let slot = parent_header.free_slot;
         unsafe {
             std::ptr::copy(parent_key, parent_keys.offset((loc * self.header.attr_length) as isize), self.header.attr_length);
         }
-        if parent_prev_index == BEGINNING_OF_SLOT as usize {
+        if parent_prev_index == BEGINNING_OF_SLOT {
             parent_header.free_slot = parent_entries[loc].next_slot;
             parent_entries[loc].next_slot = parent_header.first_slot;
             parent_header.first_slot = slot;
@@ -595,11 +633,7 @@ impl IndexHandle {
             }
         }
 
-        if let Err(e) = self.pfh.unpin_dirty_page(new_ph.get_page_num()) {
-            dbg!(&e);
-            return Err(IndexingError::UnpinPageError);
-        }
-        Ok(loc)
+        Ok(loc, new_ph)//new_ph will be unpinned in the caller.
     }
     
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
@@ -629,7 +663,7 @@ impl IndexHandle {
             if i == self.header.max_keys - 1 {
                 entries[i].next_slot = NO_MORE_SLOTS;
             } else {
-                entries[i].next_slot = (i+1) as u32;
+                entries[i].next_slot = i+1;
             }
         }
         
@@ -671,7 +705,7 @@ impl IndexHandle {
             if i == self.header.max_bucket_entries - 1 {
                 entries[i].next_slot = NO_MORE_SLOTS;
             } else {
-                entries[i].next_slot = (i+1) as u32;
+                entries[i].next_slot = i+1;
             }
         }
 
@@ -700,13 +734,13 @@ impl IndexHandle {
             &mut *(node_data as *mut EntryHeader)
         };
         
-        let mut prev_index = BEGINNING_OF_SLOT as usize;
-        let mut curr_index = entry_header.first_slot as usize;
+        let mut prev_index = BEGINNING_OF_SLOT;
+        let mut curr_index = entry_header.first_slot;
         let mut is_dup = false;
 
         let mut ptr: *mut u8;
 
-        while curr_index != NO_MORE_SLOTS as usize {
+        while curr_index != NO_MORE_SLOTS {
             ptr = unsafe {
                 keys.offset((self.header.attr_length * curr_index) as isize)
             };
@@ -720,7 +754,7 @@ impl IndexHandle {
                 }
             }
             prev_index = curr_index;
-            curr_index = node_entries[curr_index].next_slot as usize;
+            curr_index = node_entries[curr_index].next_slot;
         }
         Ok((prev_index, is_dup))
     }
