@@ -166,11 +166,11 @@ pub struct EntryHeader {
     is_empty: bool,
 
     num_keys: usize,
-    free_slot: u32,
-    first_slot: u32,//the pointer to the first node of the linked list.
+    free_slot: usize,
+    first_slot: usize,//the pointer to the first node of the linked list.
 
     num1: u32, //invalid unless the entry is determined as a leaf node or an internal node.
-    num2: u32, 
+    num2: u32,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -179,8 +179,8 @@ pub struct LeafHeader {
     is_empty: bool,
 
     num_keys: usize,
-    free_slot: u32,
-    first_slot: u32,//the pointer to the first node of the linked list.
+    free_slot: usize,
+    first_slot: usize,//the pointer to the first node of the linked list.
 
     prev_page: u32,
     next_page: u32
@@ -192,8 +192,8 @@ pub struct InternalHeader {
     is_empty: bool,
 
     num_keys: usize,
-    free_slot: u32,
-    first_slot: u32,//the pointer to the first node of the linked list.
+    free_slot: usize,
+    first_slot: usize,//the pointer to the first node of the linked list.
 
     first_child: u32,//page num of the first child node.
     num2: u32
@@ -202,8 +202,8 @@ pub struct InternalHeader {
 #[derive(Debug, Copy, Clone)]
 struct BucketHeader {
     num_keys: usize,
-    free_slot: u32,
-    first_slot: u32,
+    free_slot: usize,
+    first_slot: usize,
     next_bucket: u32
 }
 
@@ -217,16 +217,16 @@ enum EntryType {
 #[derive(Debug, Copy, Clone)]
 struct NodeEntry {
     et_type: EntryType,
-    next_slot: u32,//points to the next entry in the node.
+    next_slot: usize,//points to the next entry in the node.
     page_num: u32,//page_num and slot_num associated with the record.
-    slot_num: u32,//if this is a duplicate entry, the page_num is set to be the bucket page num.
+    slot_num: usize,//if this is a duplicate entry, the page_num is set to be the bucket page num.
 }
 
 #[derive(Debug, Copy, Clone)]
 struct BucketEntry {
-    next_slot: u32,
+    next_slot: usize,
     page_num: u32,
-    slot_num: u32,
+    slot_num: usize,
 }
 
 /*
@@ -292,7 +292,7 @@ impl IndexHandle {
 
             if !is_dup {
                 //copy key_val to keys
-                let index = node_header.free_slot as usize;
+                let index = node_header.free_slot;
                 unsafe {
                     std::ptr::copy(key_val, keys.offset((index * self.header.attr_length) as isize), self.header.attr_length);
                 }
@@ -450,11 +450,15 @@ impl IndexHandle {
      *   1. parent_ph: parent node PageHandle
      *   2. full_ph: PageHandle of the full node to split.
      *   3. is_leaf: is the full node a leaf node.
+     *   4. parent_prev_index: previous index of new key, acquired by the method 
+     *      find_node_insert_index.
      * returns:
      *   1. page number of the new node.
+     *   2. the index at which a new key is inserted.
      */
-    fn split_node(&mut self, parent_ph: PageHandle, full_ph: PageHandle, is_leaf: bool) -> Result<(usize), IndexingError> {
+    fn split_node(&mut self, parent_ph: PageHandle, full_ph: PageHandle, is_leaf: bool, parent_prev_index: usize) -> Result<(usize), IndexingError> {
         let parent_header = utils::get_header_mut::<InternalHeader>();
+        let parent_entries = self.get_node_entries(parent_ph.get_data());
         
         let new_ph = match self.create_new_node(&is_leaf) {
             Err(e) => {
@@ -518,8 +522,84 @@ impl IndexHandle {
         let mut prev_index2 = BEGINNING_OF_SLOT as usize;
         let mut curr_index2 = new_header.free_slot as usize;
         while curr_index != NO_MORE_SLOTS {
+            new_entries[curr_index2] = full_entries[curr_index];//NodeEntry implemented Copy trait.
+            unsafe {
+                std::ptr::copy(full_keys.offset((curr_index * self.header.attr_length) as isize), new_keys.offset((curr_index2 * self.header.attr_length)), self.header.attr_length);
+            }
 
+            if prev_index2 == BEGINNING_OF_SLOT {//as for the first slot.
+                new_header.free_slot = new_entries[curr_index2].next_slot;
+                new_entries[curr_index2].next_slot = new_header.first_slot;
+                new_header.first_slot = curr_index2;
+            } else {
+                new_header.free_slot = new_entries[curr_index2].next_slot;
+                new_entries[curr_index2].next_slot = new_entries[prev_index2].next_slot;
+                new_entries[prev_index2].next_slot = curr_index2;
+            }
+
+            prev_index2 = curr_index2;
+            curr_index2 = new_entries[curr_index2].next_slot;
+
+            prev_index = curr_index;
+            curr_index = full_entries[curr_index].next_slot;
+            full_entries[prev_index].next_slot = full_header.free_slot;
+            full_header.free_slot = prev_index;
+
+            full_header.num_keys -= 1;
+            new_header.num_keys += 1;
         }
+        
+        //insert the parent_key into the parent node at the index specified in parameters.
+        let loc = parent_header.free_slot as usize;
+        let slot = parent_header.free_slot;
+        unsafe {
+            std::ptr::copy(parent_key, parent_keys.offset((loc * self.header.attr_length) as isize), self.header.attr_length);
+        }
+        if parent_prev_index == BEGINNING_OF_SLOT as usize {
+            parent_header.free_slot = parent_entries[loc].next_slot;
+            parent_entries[loc].next_slot = parent_header.first_slot;
+            parent_header.first_slot = slot;
+        } else {
+            parent_header.free_slot = parent_entries[loc].next_slot;
+            parent_entries[loc].next_slot = parent_entries[parent_prev_index].next_slot;
+            parent_entries[parent_prev_index].next_slot = slot;
+        }
+        parent_header.num_keys += 1;
+
+        /*
+         * As all leaf nodes are linked together, so we need to link the new node if it's
+         * a leaf node.
+         */
+        if is_leaf {
+            let new_header = utils::get_header_mut::<LeafHeader>(new_ph.get_data());
+            let full_header = utils::get_header_mut::<LeafHeader>(full_ph.get_data());
+            let next_page = full_header.next_page;
+            
+            new_header.prev_page = full_ph.get_page_num();
+            new_header.next_page = full_header.next_page;
+            full_header.next_page = new_ph.get_page_num();
+            if next_page != NO_MORE_PAGES {
+                let full_next_ph = match self.pfh.get_page(next_page) {
+                    Err(e) => {
+                        dbg!(&e);
+                        return Err(IndexingError::GetPageError);
+                    },
+                    Ok(v) => v
+                };
+                let full_next_header = utils::get_header_mut::<LeafHeader>(full_next_ph.get_data());
+                full_next_header.prev_page = new_ph.get_page_num();
+                if let Err(e) = self.pfh.unpin_dirty_page(next_page) {
+                    dbg!(&e);
+                    return Err(IndexingError::UnpinPageError);
+                }
+            }
+        }
+
+        if let Err(e) = self.pfh.unpin_dirty_page(new_ph.get_page_num()) {
+            dbg!(&e);
+            return Err(IndexingError::UnpinPageError);
+        }
+        Ok(loc)
     }
     
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {

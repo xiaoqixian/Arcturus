@@ -14,7 +14,7 @@ use crate::errors::{Error, RecordError};
 #[derive(Debug, Copy, Clone)]
 pub struct RID {
     page_num: u32,
-    slot_num: u32
+    slot_num: usize
 }
 
 pub struct Record {
@@ -62,7 +62,7 @@ impl RID {
         self.page_num
     }
 
-    pub fn get_slot_num(&self) -> u32 {
+    pub fn get_slot_num(&self) -> usize {
         self.slot_num
     }
 }
@@ -178,7 +178,7 @@ impl RecordFileHandle {
      * allocate a new page and let next_free = new page num;
      */
     pub fn insert_record(&mut self, data: *mut u8) -> Result<RID, Error> {
-        let mut slot_num: u32 = 0;
+        let mut slot_num: usize = 0;
         let mut ph = PageHandle::new(0, std::ptr::null_mut());
         let mut flag = true;
         let mut new_page = false;
@@ -269,13 +269,13 @@ impl RecordFileHandle {
     //set a bit in the bitmap accroding to a slot_num, 
     //if set is true, set the bit, else unset.
     //An error is returned if the bit is already set or unset.
-    fn set_bitmap(&mut self, slot: u32, data: *mut u8, set: bool) -> Result<(), RecordError> {
+    fn set_bitmap(&mut self, slot: usize, data: *mut u8, set: bool) -> Result<(), RecordError> {
         let bitmap = unsafe {
             let p = data.offset(self.header.bitmap_offset as isize);
             std::slice::from_raw_parts_mut(p, self.header.bitmap_size)
         };
-        let moder = (slot/8) as usize;
-        let remainder = (slot as usize) - moder * 8;
+        let moder = slot/8;
+        let remainder = slot - moder * 8;
         let num = &mut bitmap[moder];
         let bit: u8 = *num & ((1 as u8)<<(7-remainder));
         
@@ -297,7 +297,7 @@ impl RecordFileHandle {
         Ok(())
     }
 
-    fn find_free_slot(&self, data: *mut u8) -> Result<u32, RecordError> {
+    fn find_free_slot(&self, data: *mut u8) -> Result<usize, RecordError> {
         let bitmap = unsafe {
             let p = data.offset(self.header.bitmap_offset as isize);
             std::slice::from_raw_parts_mut(p, self.header.bitmap_size)
@@ -308,14 +308,14 @@ impl RecordFileHandle {
             let offset = (i - index*8) as u8;
             if bitmap[index] & (1<<(7-offset)) == 0 {
                 bitmap[index] += (1<<(7-offset));
-                return Ok(i as u32);
+                return Ok(i);
             }
         }
         Err(RecordError::FullPage)
     }
 
     //the offset of a specific record in a page.
-    fn get_record_offset(&self, slot: u32) -> isize {
-        (self.header.records_offset + (slot as usize)*self.header.record_size) as isize
+    fn get_record_offset(&self, slot: usize) -> isize {
+        (self.header.records_offset + slot*self.header.record_size) as isize
     }
 }

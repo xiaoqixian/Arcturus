@@ -49,13 +49,13 @@ pub fn get_arr_mut<T>(p: *mut u8, offset: usize, len: usize) -> &'static mut [T]
 
 //get header from a raw pointer. offset is 0 by default
 //this is generic function.
-pub fn get_header<T>(data: *mut u8) -> &T {
+pub fn get_header<T>(data: *mut u8) -> &'static T {
     unsafe {
         & *(data as *const T)
     }
 }
 
-pub fn get_header_mut<T>(data: *mut u8) -> &mut T {
+pub fn get_header_mut<T>(data: *mut u8) -> &'static mut T {
     unsafe {
         &mut *(data as *mut T)
     }
