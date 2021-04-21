@@ -58,6 +58,13 @@ pub struct RecordFileHandle {
 }
 
 impl RID {
+    pub fn new(page_num: u32, slot_num: usize) -> Self {
+        Self {
+            page_num,
+            slot_num,
+        }
+    }
+
     pub fn get_page_num(&self) -> u32 {
         self.page_num
     }

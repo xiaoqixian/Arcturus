@@ -38,7 +38,8 @@ pub enum Error {
 
     //indexing module
     CreateNewNodeError,
-    InsertIntoNonFullNodeError
+    InsertIntoNonFullNodeError,
+    SplitNodeError,
 }
 
 #[derive(Debug)]
@@ -103,4 +104,5 @@ pub enum IndexingError {
     UnpinPageError,
     FindInsertIndexError,
     AbnormalEntryType,
+    SplitNodeError,
 }

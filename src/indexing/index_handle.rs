@@ -259,7 +259,7 @@ impl IndexHandle {
         
         //if the root page is full.
         if root_header.num_keys == self.header.max_keys {
-            let new_root_ph = match self.create_new_node(false) {
+            let new_root_ph = match self.create_new_node(&false) {
                 Err(e) => {
                     dbg!(&e);
                     return Err(Error::CreateNewNodeError);
@@ -272,7 +272,8 @@ impl IndexHandle {
 
             //split the original root node.
             if let Err(e) = self.split_node(new_root_ph, self.root_ph, root_header.is_leaf, BEGINNING_OF_SLOT) {
-                return Err(e);
+                dbg!(&e);
+                return Err(Error::SplitNodeError);
             }
 
             if let Err(e) = self.pfh.unpin_dirty_page(self.root_ph.get_page_num()) {
@@ -348,13 +349,13 @@ impl IndexHandle {
                         };
                         //insert_into_bucket is in charge of unpinning the page
                         //no matter if it's dirty or not.
-                        match self.insert_into_bucket(&bucket_ph, rid) {
+                        match self.insert_into_bucket(bucket_ph, rid) {
                             Err(e) => {
                                 return Err(e);
                             },
                             Ok(_) => {}
                         }
-                        match self.insert_into_bucket(&bucket_ph, RID::new(prev_entry.page_num, prev_entry.slot_num)) {
+                        match self.insert_into_bucket(bucket_ph, &RID::new(prev_entry.page_num, prev_entry.slot_num)) {
                             Err(e) => {
                                 return Err(e);
                             },
@@ -371,7 +372,7 @@ impl IndexHandle {
                             },
                             Ok(v) => v
                         };
-                        if let Err(e) = self.insert_into_bucket(&bucket_ph, rid) {
+                        if let Err(e) = self.insert_into_bucket(bucket_ph, rid) {
                             return Err(e);
                         }
                     }
@@ -442,16 +443,16 @@ impl IndexHandle {
                 dbg!(&e);
                 return Err(IndexingError::UnpinPageError);
             }
-
-            Ok(())
         }
+
+        Ok(())
     }
 
     /*
      * Insert a rid into a bucket, entries related to a same index value have
      * no relations.
      */
-    fn insert_into_bucket(&mut self, mut ph: &PageHandle, rid: RID) -> Result<(), IndexingError> {
+    fn insert_into_bucket(&mut self, mut ph: PageHandle, rid: &RID) -> Result<(), IndexingError> {
         let mut flag = true;
         while flag {
             /*
@@ -472,7 +473,8 @@ impl IndexHandle {
                 };
                 bucket_header.next_bucket = new_ph.get_page_num();
                 if let Err(e) = self.pfh.unpin_dirty_page(ph.get_page_num()) {
-                    return Err(e);
+                    dbg!(&e);
+                    return Err(IndexingError::UnpinPageError);
                 }
 
                 bucket_entries = self.get_bucket_entries(new_ph.get_data());
@@ -489,13 +491,15 @@ impl IndexHandle {
                 bucket_header.first_slot = loc;
                 bucket_header.num_keys += 1;
                 if let Err(e) = self.pfh.unpin_dirty_page(ph.get_page_num()) {
-                    return Err(e);
+                    dbg!(&e);
+                    return Err(IndexingError::UnpinPageError);
                 }
             }
 
             ph = match self.pfh.get_page(bucket_header.next_bucket) {
                 Err(e) => {
-                    return Err(e);
+                    dbg!(&e);
+                    return Err(IndexingError::GetPageError);
                 },
                 Ok(v) => v
             };
@@ -515,7 +519,7 @@ impl IndexHandle {
      *   2. new node PageHandle.
      */
     fn split_node(&mut self, parent_ph: PageHandle, full_ph: PageHandle, is_leaf: bool, parent_prev_index: usize) -> Result<(usize, PageHandle), IndexingError> {
-        let parent_header = utils::get_header_mut::<InternalHeader>();
+        let parent_header = utils::get_header_mut::<InternalHeader>(parent_ph.get_data());
         let parent_entries = self.get_node_entries(parent_ph.get_data());
         
         let new_ph = match self.create_new_node(&is_leaf) {
@@ -582,7 +586,7 @@ impl IndexHandle {
         while curr_index != NO_MORE_SLOTS {
             new_entries[curr_index2] = full_entries[curr_index];//NodeEntry implemented Copy trait.
             unsafe {
-                std::ptr::copy(full_keys.offset((curr_index * self.header.attr_length) as isize), new_keys.offset((curr_index2 * self.header.attr_length)), self.header.attr_length);
+                std::ptr::copy(full_keys.offset((curr_index * self.header.attr_length) as isize), new_keys.offset((curr_index2 * self.header.attr_length) as isize), self.header.attr_length);
             }
 
             if prev_index2 == BEGINNING_OF_SLOT {//as for the first slot.
@@ -653,7 +657,7 @@ impl IndexHandle {
             }
         }
 
-        Ok(loc, new_ph)//new_ph will be unpinned in the caller.
+        Ok((loc, new_ph))//new_ph will be unpinned in the caller.
     }
     
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
@@ -668,7 +672,7 @@ impl IndexHandle {
             &mut *(new_ph.get_data() as *mut NodeHeader)
         };
         new_nh.is_empty = true;
-        new_nh.is_leaf = is_leaf;
+        new_nh.is_leaf = *is_leaf;
         new_nh.num_keys = 0;
         new_nh.free_slot = 0;
         new_nh.first_slot = NO_MORE_SLOTS;
