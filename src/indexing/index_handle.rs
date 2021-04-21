@@ -295,6 +295,7 @@ impl IndexHandle {
         }
     }
 
+
     fn insert_into_nonfull_node(&mut self, node_ph: PageHandle, key_val: *mut u8, rid: &RID) -> Result<(), IndexingError> {
         let node_header = utils::get_header_mut::<NodeHeader>(node_ph.get_data());
         let entries = self.get_node_entries(node_ph.get_data());
@@ -660,6 +661,160 @@ impl IndexHandle {
         Ok((loc, new_ph))//new_ph will be unpinned in the caller.
     }
     
+    /*
+     * Delete an entry from a B+ tree is no doubt the most difficult operation to 
+     * implement.
+     * Thus, we decide not to merge nodes when the number of keys in a node is less
+     * than self.header.max_keys/2.
+     * Only when the page is empty, the corresponding BufferPage is disposed.
+     *
+     * TODO: merge nodes.
+     */
+    pub fn delete_entry(&mut self, key_val: *mut u8, rid: &RID) -> Result<(), Error> {
+        
+    }
+
+    fn delete_from_leaf(&mut self, key_val: *mut u8, rid: &RID, leaf_node: PageHandle) -> Result<bool, IndexingError> {
+        let leaf_header = utils::get_header_mut::<LeafHeader>(leaf_node.get_data());
+        let leaf_entries = self.get_node_entries(leaf_node.get_data());
+        let leaf_keys = unsafe {
+            leaf.get_data().offset(self.header.keys_offset)
+        };
+
+        let (curr_index, is_dup) = match self.find_node_insert_index(key_val, leaf_node.get_data()) {
+            Err(e) => {
+                return Err(e);
+            },
+            Ok(v) => v
+        };
+        
+        if !is_dup {
+            return Err(IndexingError::InvalidEntry);
+        }
+
+        let mut prev_index = curr_index;
+        if curr_index != leaf_header.first_slot {
+            prev_index = match Self::find_prev_index(leaf_entries, leaf_header.first_slot, curr_index) {
+                Err(e) => {
+                    return Err(e);
+                },
+                Ok(v) => v
+            };
+        }
+
+        match leaf_entries[curr_index].et_type {
+            EntryType::Unoccupied => {
+                dbg!(&leaf_entries[curr_index]);
+                Err(IndexingError::UnoccupiedEntry)
+            },
+            EntryType::New => {
+                //check the entry again.
+                if leaf_entries[curr_index].page_num != rid.get_page_num() || leaf_entries[curr_index].slot_num != rid.get_slot_num() {
+                    dbg!(&leaf_entries[curr_index]);
+                    return Err(IndexingError::InvalidEntry);
+                }
+
+                leaf_entries[curr_index].et_type = EntryType::Unoccupied;
+                leaf_header.num_keys -= 1;
+                let next_slot = leaf_entries[curr_index].next_slot;
+                
+                leaf_entries[curr_index].next_slot = leaf_header.free_slot;
+                leaf_header.free_slot = curr_index;
+                
+                if curr_index == leaf_header.first_slot {
+                    leaf_header.first_slot = next_slot;
+                } else {
+                    leaf_entries[prev_index].next_slot = next_slot;
+                }
+                Ok(())
+            },
+            EntryType::Duplicate => {
+                let bucket_ph = self.pfh.get_page(leaf_entries[curr_index].page_num) {
+                    Err(e) => {
+                        dbg!(&e);
+                        return Err(IndexingError::GetPageError);
+                    },
+                    Ok(v) => v
+                };
+                let to_delete = match self.delete_from_bucket(key_val, rid, bucket_ph) {
+                    Err(e) => {
+                        return Err(e);
+                    },
+                    Ok(v) => v
+                };
+                if let Err(e) = self.pfh.unpin_dirty_page(bucket_ph.get_page_num()) {
+                    dbg!(&e);
+                    return Err(IndexingError::UnpinPageError);
+                }
+
+                //if the bucket is empty, dispose the page.
+                if to_delete {
+                    
+                }
+            }
+        }
+    }
+
+    /**
+     * Delete from buckets.
+     * 
+     * Parameters:
+     *   1. rid: the entry identified to this rid is to be deleteed.
+     *   2. bucket_ph: the bucket PageHandle to search into. As this is a recursive 
+     *      method, when the method is firstly called, the first bucket PageHandle is 
+     *      passed in.
+     * Returns:
+     *   1. bool: represents whether to delete this bucket.
+     *   2. last_rid: if only one rid entry is left in the bucket, this last rid is 
+     *      returned.
+     *   3. next_bucket_page_num: usually the last rid in this bucket is to inserted 
+     *      into the the previous bucket. But if only one rid left in the first bucket,
+     *      it's going into the next bucket.
+     *      If there's no next buckets, it's going into the node entries.
+     *
+     * Steps:
+     *   1. Search the entry identical to rid from the last bucket to the first bucket.
+     *   2. If there's less than one entry left in the next bucket, move it to the 
+     *      previous bucket and dispose the next bucket.
+     */
+    fn delete_from_bucket(&mut self, rid: &RID, bucket_ph: PageHandle) -> Result<(bool, ), IndexingError> {
+        //results to return
+        let mut to_delete = false;
+        let mut last_rid = RID::new(0, 0);
+
+        let bucket_header = utils::get_header_mut::<BucketHeader>(bucket_ph.get_data());
+        let bucket_entries = self.get_bucket_entries(bucket_ph.get_data());
+
+        //if there's a next bucket, search in it first.
+        if bucket_header.next_bucket != NO_MORE_PAGES {
+            let next_bucket_ph = match self.pfh.get_page(bucket_header.next_bucket) {
+                Err(e) => {
+                    dbg!(&e);
+                    return Err(IndexingError::GetPageError);
+                },
+                Ok(v) => v
+            };
+            (to_delete, last_rid) = match self.delete_from_bucket(rid) {
+                Err(e) => {
+                    return Err(e);
+                },
+                Ok(v) => v
+            };
+        } else {//if this is the last bucket.
+            if bucket_header.first_slot == NO_MORE_SLOTS || bucket_header.first_slot == BEGINNING_OF_SLOT {
+                return Err(IndexingError::InvalidBucket);
+            }
+            let mut prev_index = BEGINNING_OF_SLOT;
+            let mut curr_index = bucket_header.first_slot;
+            
+            while curr_index != NO_MORE_SLOTS {
+                if bucket_entries[curr_index].page_num == rid.get_page_num() && bucket_entries[curr_index].slot_num == rid.get_slot_num() {
+                    //unlink curr_index.
+                }
+            }
+        }
+    }
+
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
         let new_ph = match self.pfh.allocate_page() {
             Err(e) => {
@@ -744,8 +899,8 @@ impl IndexHandle {
 
     /*
      * Find an appropriate insert index for an entry with a key whose value is val.
-     * If success, return a tuple, usize represents the index, bool represents if 
-     * the index entry is a duplicate one.
+     * If success, return a tuple, usize represents the index, 
+     * bool represents if the index entry is a duplicate one. 
      *
      * Keys and entries are both arrays, and associated elements are at same index.
      */
@@ -781,6 +936,20 @@ impl IndexHandle {
             curr_index = node_entries[curr_index].next_slot;
         }
         Ok((prev_index, is_dup))
+    }
+
+    fn find_prev_index(entries: &[NodeEntry], start: usize, target: usize) -> Result<usize, IndexingError> {
+        let mut prev_index = start;
+        
+        while prev_index != NO_MORE_SLOTS {
+            if entries[prev_index].next_slot == target {
+                return Ok(prev_index);
+            }
+            prev_index = entries[prev_index].next_slot;
+        }
+        
+        dbg!(entries);
+        Err(IndexingError::EntriesBroken)
     }
 
     fn compare(val1: *mut u8, val2: *mut u8, attr_type: AttrType, len: usize) -> Ordering {

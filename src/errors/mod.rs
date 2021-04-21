@@ -105,4 +105,9 @@ pub enum IndexingError {
     FindInsertIndexError,
     AbnormalEntryType,
     SplitNodeError,
+    
+    InvalidEntry,//returns when the entry to delete is not found in the B+ tree.
+    UnoccupiedEntry,//returns when the entry is expected not to be Unoccupied but is Unoccupied.
+    DisorderError,//all keys should be ordered, returns when disordered keys appear.
+    EntriesBroken,//returns when a index can not be found through the linked list.
 }
