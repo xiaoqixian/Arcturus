@@ -93,21 +93,29 @@ pub enum RecordError {
 
 #[derive(Debug)]
 pub enum IndexingError {
+    //file_manager part
     CreateFileError,
     InvalidAttr,
     IncompleteWrite,
     IncompleteRead,
     FileExist,
+
+    //page_file part
     AllocatePageError,
     GetPageError,
-    CreateNewNodeError,
     UnpinPageError,
+    DisposePageError,
+
     FindInsertIndexError,
     AbnormalEntryType,
     SplitNodeError,
+    CreateNewNodeError,
     
     InvalidEntry,//returns when the entry to delete is not found in the B+ tree.
     UnoccupiedEntry,//returns when the entry is expected not to be Unoccupied but is Unoccupied.
     DisorderError,//all keys should be ordered, returns when disordered keys appear.
     EntriesBroken,//returns when a index can not be found through the linked list.
+    InvalidBucket,//returns when a bucket is supposed to be empty and to be disposed.
+    EntryNotFoundInBucket,//returns when an entry is not found in a bucket
+    ZeroKeyInBucket,//zero num_keys in a bucket, not supposed to happen, 
 }

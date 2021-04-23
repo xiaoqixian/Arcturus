@@ -736,7 +736,7 @@ impl IndexHandle {
                     },
                     Ok(v) => v
                 };
-                let to_delete = match self.delete_from_bucket(key_val, rid, bucket_ph) {
+                let (to_delete, last_rid, next_next_bucket) = match self.delete_from_bucket(key_val, rid, bucket_ph) {
                     Err(e) => {
                         return Err(e);
                     },
@@ -749,8 +749,30 @@ impl IndexHandle {
 
                 //if the bucket is empty, dispose the page.
                 if to_delete {
-                    
+                    if let Some(v) = last_rid {//if the last rid exist.
+                        let bucket_header = utils::get_header_mut::<BucketHeader>(bucket_ph.get_data());
+
+                        if bucket_header.free_slot != NO_MORE_SLOTS {//if the first bucket has space.
+                            let bucket_entries = self.get_bucket_entries(bucket_ph.get_data());
+                            let loc = bucket_header.free_slot;
+                            
+                            bucket_entries[loc].page_num = last_rid.unwrap().get_page_num();
+                            bucket_entries[loc].slot_num = last_rid.unwrap().get_slot_num();
+
+                            bucket_header.free_slot = bucket_entries[loc].next_slot;
+                            if bucket_header.first_slot == BEGINNING_OF_SLOT {
+                                bucket_header.first_slot = loc;
+                                bucket_entries[loc].next_slot = NO_MORE_SLOTS;
+                            } else {
+                                bucket_entries[loc].next_slot = bucket_header.first_slot;
+                                bucket_header.first_slot = loc;
+                            }
+
+                            bucket_header.num_keys += 1;
+                        }
+                    }
                 }
+                Ok(())
             }
         }
     }
@@ -766,7 +788,7 @@ impl IndexHandle {
      * Returns:
      *   1. bool: represents whether to delete this bucket.
      *   2. last_rid: if only one rid entry is left in the bucket, this last rid is 
-     *      returned.
+     *      returned. Of course, most of the time, it's just None.
      *   3. next_bucket_page_num: usually the last rid in this bucket is to inserted 
      *      into the the previous bucket. But if only one rid left in the first bucket,
      *      it's going into the next bucket.
@@ -776,11 +798,14 @@ impl IndexHandle {
      *   1. Search the entry identical to rid from the last bucket to the first bucket.
      *   2. If there's less than one entry left in the next bucket, move it to the 
      *      previous bucket and dispose the next bucket.
+     *   3. If the target entry is found in any of the buckets, only the previous bucket
+     *      do the delete work. Other buckets just return. 
      */
-    fn delete_from_bucket(&mut self, rid: &RID, bucket_ph: PageHandle) -> Result<(bool, ), IndexingError> {
+    fn delete_from_bucket(&mut self, rid: &RID, bucket_ph: &PageHandle) -> Result<(bool, Option<RID>, u32), IndexingError> {
         //results to return
         let mut to_delete = false;
-        let mut last_rid = RID::new(0, 0);
+        let mut last_rid: Option<RID> = None; 
+        let mut next_next_bucket = NO_MORE_PAGES;
 
         let bucket_header = utils::get_header_mut::<BucketHeader>(bucket_ph.get_data());
         let bucket_entries = self.get_bucket_entries(bucket_ph.get_data());
@@ -794,25 +819,107 @@ impl IndexHandle {
                 },
                 Ok(v) => v
             };
-            (to_delete, last_rid) = match self.delete_from_bucket(rid) {
+            let mut found = true;
+
+            match self.delete_from_bucket(rid, &next_bucket_ph) {
+                Err(IndexingError::EntryNotFoundInBucket) => {
+                    found = false;
+                },
                 Err(e) => {
                     return Err(e);
                 },
-                Ok(v) => v
-            };
-        } else {//if this is the last bucket.
-            if bucket_header.first_slot == NO_MORE_SLOTS || bucket_header.first_slot == BEGINNING_OF_SLOT {
-                return Err(IndexingError::InvalidBucket);
-            }
-            let mut prev_index = BEGINNING_OF_SLOT;
-            let mut curr_index = bucket_header.first_slot;
-            
-            while curr_index != NO_MORE_SLOTS {
-                if bucket_entries[curr_index].page_num == rid.get_page_num() && bucket_entries[curr_index].slot_num == rid.get_slot_num() {
-                    //unlink curr_index.
+                Ok((a, b, c)) => {
+                    if let None = b {//if last_rid is None, means the entry is found before the next bucket. No matter if that bucket is deleted or not, all job should be done in the next bucket. We don't do anything about it.
+                        return Ok((a, b, c));
+                    }
+                    (to_delete, last_rid, next_next_bucket) = (a, b, c);
                 }
             }
+
+            if let Err(e) = self.pfh.unpin_dirty_page(next_bucket_ph.get_page_num()) {
+                dbg!(&e);
+                return Err(IndexingError::UnpinPageError);
+            }
+
+            if found {
+                let next_bucket_header = utils::get_header_mut::<BucketHeader>(next_bucket_ph.get_data());
+                if to_delete && next_bucket_header.num_keys == 1 && bucket_header.free_slot != NO_MORE_SLOTS {
+                    let next_bucket_entries = self.get_bucket_entries(next_bucket_ph.get_data());
+                    if let None = last_rid {
+                        return Err(IndexingError::NoneLastRid);
+                    }
+                    let loc = bucket_header.free_slot;
+                    bucket_entries[loc].page_num = last_rid.unwrap().get_page_num();
+                    bucket_entries[loc].slot_num = last_rid.unwrap().get_slot_num();
+
+                    //link free_slot
+                    bucket_header.free_slot = bucket_entries[loc].next_slot;
+                    if bucket_header.first_slot == BEGINNING_OF_SLOT {
+                        bucket_header.first_slot = loc;
+                        bucket_entries[loc].next_slot = NO_MORE_SLOTS;
+                    } else {
+                        bucket_entries[loc].next_slot = bucket_header.first_slot;
+                        bucket_header.first_slot = loc;
+                    }
+                    bucket_header.num_keys += 1;
+                    next_bucket_header.num_keys -= 1;
+                }
+
+                if to_delete && next_bucket_header.num_keys == 0 {
+                    if let Err(e) = self.pfh.dispose_page(next_bucket_ph.get_page_num()) {
+                        dbg!(&e);
+                        return Err(IndexingError::DisposePageError);
+                    }
+                    //after disposing the next bucket, link the next next bucket page.
+                    bucket_header.next_bucket = next_next_bucket;
+                }
+                return Ok((false, None, next_next_bucket));
+            }
         }
+
+        if bucket_header.first_slot == NO_MORE_SLOTS || bucket_header.first_slot == BEGINNING_OF_SLOT {
+            return Err(IndexingError::InvalidBucket);
+        }
+        let mut prev_index = BEGINNING_OF_SLOT;
+        let mut curr_index = bucket_header.first_slot;
+        let mut found = false;
+        
+        while curr_index != NO_MORE_SLOTS {
+            if bucket_entries[curr_index].page_num == rid.get_page_num() && bucket_entries[curr_index].slot_num == rid.get_slot_num() {
+                found = true;
+                //unlink curr_index.
+                let next_slot = bucket_entries[curr_index].next_slot;
+                bucket_entries[curr_index].next_slot = bucket_header.free_slot;
+                bucket_header.free_slot = curr_index;
+
+                if bucket_header.first_slot == curr_index {
+                    bucket_header.first_slot = next_slot;
+                } else {
+                    bucket_entries[prev_index].next_slot = next_slot;
+                }
+
+                bucket_header.num_keys -= 1;
+                break;
+            }
+
+            prev_index = curr_index;
+            curr_index = bucket_entries[curr_index].next_slot;
+        }
+
+        if !found {
+            return Err(IndexingError::EntryNotFoundInBucket);
+        }
+
+        if bucket_header.num_keys <= 1 {
+            if bucket_header.num_keys == 0 {
+                let last_entry = &bucket_entries[bucket_header.first_slot];
+                last_rid = Some(RID::new(last_entry.page_num, last_entry.slot_num));
+            }
+            to_delete = true;//whether the bucket is deleted depends on the previous bucket capacity.
+            next_next_bucket = bucket_header.next_bucket;
+        }
+
+        Ok((to_delete, last_rid, next_next_bucket))
     }
 
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
