@@ -671,7 +671,97 @@ impl IndexHandle {
      * TODO: merge nodes.
      */
     pub fn delete_entry(&mut self, key_val: *mut u8, rid: &RID) -> Result<(), Error> {
+        let root_header = utils::get_header::<NodeHeader>(self.root_ph.get_data());
         
+        if root_header.is_leaf {
+            
+        }
+    }
+
+    fn delete_from_internal(&mut self, key_val: *mut u8, rid: &RID, internal_node: PageHandle) -> Result<(), IndexingError> {
+        let node_header = utils::get_header_mut::<NodeHeader>(internal_node.get_data());
+
+        let (mut curr_index, is_dup) = match self.find_node_insert_index(key_val, internal_node.get_data()) {
+            Err(e) => {
+                return Err(e);
+            },
+            Ok(v) => v
+        };
+        if curr_index == BEGINNING_OF_SLOT {
+            curr_index = node_header.first_child;
+        }
+        let node_entries = self.get_node_entries(internal_node.get_data());
+
+        let next_node_ph = match self.pfh.get_page(node_entries[curr_index].page_num) {
+            Err(e) => {
+                dbg!(&e);
+                return Err(IndexingError::GetPageError);
+            },
+            Ok(v) => v
+        };
+        
+        let (to_delete_next, next_key) = {
+            if node_header.is_leaf {
+                match self.delete_from_leaf(key_val, rid, next_node_ph) {
+                    Err(e) => {
+                        return Err(e);
+                    },
+                    Ok(v) => v
+                }
+            } else {
+                match self.delete_from_internal(key_val, rid, next_node_ph) {
+                    Err(e) => {
+                        return Err(e);
+                    },
+                    Ok(v) => v
+                }
+            }
+        };
+
+        /*
+         * If the entry to delete is also a key in the parent node. We need to update 
+         * the key in the parent node. If there's no more entries in the next node, 
+         * just delete it.
+         */
+        if is_dup {
+            if let None = next_key {
+                //means the next node is empty.
+                if let Err(e) = self.pfh.unpin_dirty_page(next_node_ph.get_page_num()) {
+                    dbg!(&e);
+                    return Err(IndexingError::UnpinPageError);
+                }
+                if let Err(e) = self.pfh.dispose_page(next_node_ph.get_page_num()) {
+                    dbg!(&e);
+                    return Err(IndexingError::DisposePageError);
+                }
+
+                if curr_index == node_header.first_slot {
+                    node_header.first_slot = node_entries[curr_index].next_slot;
+                    node_entries[curr_index].next_slot = node_header.free_slot;
+                    node_header.free_slot = curr_index;
+                } else {
+                    let prev_index = match self.find_prev_index(node_entries, node_header.first_slot, curr_index) {
+                        Err(e) => {
+                            return Err(e);
+                        },
+                        Ok(v) => v
+                    };
+                    
+                    node_entries[prev_index].next_slot = node_entries[curr_index].next_slot;
+                    node_entries[curr_index].next_slot = node_header.free_slot;
+                    node_header.free_slot = curr_index;
+                }
+            } else {//if there're elements exist in the next node.
+                let next_key = next_key.unwrap();//a raw pointer.
+                let loc = unsafe {
+                    internal_node.get_data().offset((node_header.keys_offset + curr_index * self.header.attr_length) as isize)
+                };
+                unsafe {
+                    std::ptr::copy(next_key, loc, self.header.attr_length);
+                }
+                
+            }
+        }
     }
 
     fn delete_from_leaf(&mut self, key_val: *mut u8, rid: &RID, leaf_node: PageHandle) -> Result<bool, IndexingError> {

@@ -118,4 +118,5 @@ pub enum IndexingError {
     InvalidBucket,//returns when a bucket is supposed to be empty and to be disposed.
     EntryNotFoundInBucket,//returns when an entry is not found in a bucket
     ZeroKeyInBucket,//zero num_keys in a bucket, not supposed to happen, 
+    NoneLastRid,
 }
