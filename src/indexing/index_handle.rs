@@ -713,8 +713,15 @@ impl IndexHandle {
             curr_index = node_header.first_child;
         }
         let node_entries = self.get_node_entries(node.get_data());
+        let next_page_num = {
+            if curr_index == BEGINNING_OF_SLOT {
+                node_entries[curr_index].page_num
+            } else {
+                node_header.first_child
+            }
+        };
 
-        let next_node_ph = match self.pfh.get_page(node_entries[curr_index].page_num) {
+        let next_node_ph = match self.pfh.get_page(next_page_num) {
             Err(e) => {
                 dbg!(&e);
                 return Err(IndexingError::GetPageError);
@@ -722,7 +729,7 @@ impl IndexHandle {
             Ok(v) => v
         };
 
-        let next_node_header = utils::get_header::<NodeHeader>(new_node_ph.get_data());
+        let next_node_header = utils::get_header::<NodeHeader>(next_node_ph.get_data());
         
         let (to_delete_next, next_next_key) = {
             if next_node_header.is_leaf {
@@ -733,7 +740,7 @@ impl IndexHandle {
                     Ok(v) => v
                 }
             } else {
-                match self.delete_from_internal(key_val, rid, next_node_ph) {
+                match self.delete_from_node(key_val, rid, next_node_ph) {
                     Err(e) => {
                         return Err(e);
                     },
@@ -827,7 +834,7 @@ impl IndexHandle {
         let leaf_header = utils::get_header_mut::<LeafHeader>(leaf_node.get_data());
         let leaf_entries = self.get_node_entries(leaf_node.get_data());
         let leaf_keys = unsafe {
-            leaf.get_data().offset(self.header.keys_offset)
+            leaf_node.get_data().offset(self.header.keys_offset)
         };
 
         let (curr_index, is_dup) = match self.find_node_insert_index(key_val, leaf_node.get_data()) {

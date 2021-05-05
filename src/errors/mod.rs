@@ -110,6 +110,9 @@ pub enum IndexingError {
     AbnormalEntryType,
     SplitNodeError,
     CreateNewNodeError,
+
+    DeleteFromLeafError,
+    DeleteFromNodeError,
     
     InvalidEntry,//returns when the entry to delete is not found in the B+ tree.
     UnoccupiedEntry,//returns when the entry is expected not to be Unoccupied but is Unoccupied.
