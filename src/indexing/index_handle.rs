@@ -677,7 +677,7 @@ impl IndexHandle {
             match self.delete_from_leaf(key_val, rid, self.root_ph) {
                 Err(e) => {
                     dbg!(e);
-                    return Err(IndexingError::DeleteFromLeafError);
+                    return Err(Error::DeleteFromLeafError);
                 },
                 Ok(_) => {}
             }
@@ -685,7 +685,7 @@ impl IndexHandle {
             match self.delete_from_node(key_val, rid, self.root_ph) {
                 Err(e) => {
                     dbg!(e);
-                    return Err(IndexingError::DeleteFromNodeError);
+                    return Err(Error::DeleteFromNodeError);
                 },
                 Ok(v) => {
                     let (to_delete, next_key) = v;
@@ -899,7 +899,7 @@ impl IndexHandle {
                     },
                     Ok(v) => v
                 };
-                let (to_delete, next_next_bucket) = match self.delete_from_bucket(key_val, rid, bucket_ph) {
+                let (to_delete, next_next_bucket) = match self.delete_from_bucket(rid, &bucket_ph) {
                     Err(IndexingError::EntryNotFoundInBucket) => {
                         return Err(IndexingError::InvalidEntry);
                     },
@@ -941,7 +941,7 @@ impl IndexHandle {
                     }
                 }
                 
-           }
+            }
         }
         let mut to_delete = false;
         if leaf_header.num_keys == 0 {
@@ -1006,10 +1006,12 @@ impl IndexHandle {
                     return Err(e);
                 },
                 Ok(v) => {
-                    if !v[0] {//if to_delete is false, means the entry is found before the next bucket. No matter if that bucket is deleted or not, all job should be done in the next bucket. We don't do anything about it.
+                    if !v.0 {//if to_delete is false, means the entry is found before the next bucket. No matter if that bucket is deleted or not, all job should be done in the next bucket. We don't do anything about it.
                         return Ok(v);
                     }
-                    (to_delete, next_next_bucket) = v;
+                    //(to_delete, next_next_bucket) = v;
+                    to_delete = v.0;
+                    next_next_bucket = v.1;
                 }
             }
 
