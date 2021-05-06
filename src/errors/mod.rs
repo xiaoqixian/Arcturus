@@ -40,6 +40,8 @@ pub enum Error {
     CreateNewNodeError,
     InsertIntoNonFullNodeError,
     SplitNodeError,
+    DeleteFromLeafError,
+    DeleteFromNodeError,
 }
 
 #[derive(Debug)]

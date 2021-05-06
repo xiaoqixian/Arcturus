@@ -709,9 +709,7 @@ impl IndexHandle {
             },
             Ok(v) => v
         };
-        if curr_index == BEGINNING_OF_SLOT {
-            curr_index = node_header.first_child;
-        }
+
         let node_entries = self.get_node_entries(node.get_data());
         let next_page_num = {
             if curr_index == BEGINNING_OF_SLOT {
@@ -773,22 +771,26 @@ impl IndexHandle {
                     return Err(IndexingError::DisposePageError);
                 }
 
-                if curr_index == node_header.first_child {//if the next node is the first child, then the key in parent node need to update.
-                    node_header.first_child = node_entries[curr_index].next_slot;
-                    node_entries[curr_index].next_slot = node_header.free_slot;
-                    node_header.free_slot = curr_index;
-                    node_header.first_slot = node_entries[node_header.first_child].next_slot;
+                if curr_index == BEGINNING_OF_SLOT {//if the next node is the first child, then the key in parent node need to update.
+                    let first_slot = node_header.first_slot;
+                    node_header.first_child = node_entries[first_slot].page_num;
+                    node_header.first_slot = node_entries[first_slot].next_slot;
+                    node_entries[first_slot].next_slot = node_header.free_slot;
+                    node_header.free_slot = first_slot;
 
                     key_changed = true;
 
                 } else if curr_index == node_header.first_slot {
-                    node_header.first_slot = node_entries[node_header.first_slot].next_slot;
-                    node_entries[node_header.first_child].next_slot = node_header.first_slot;
+                    let first_slot = node_header.first_slot;
+
+                    node_header.first_slot = node_entries[first_slot].next_slot;
+                    node_entries[first_slot].next_slot = node_header.free_slot;
+                    node_header.free_slot = first_slot;
 
                     key_changed = true;
 
                 } else {
-                    let prev_index = match self.find_prev_index(node_entries, node_header.first_slot, curr_index) {
+                    let prev_index = match Self::find_prev_index(node_entries, node_header.first_slot, curr_index) {
                         Err(e) => {
                             return Err(e);
                         },
@@ -802,9 +804,11 @@ impl IndexHandle {
                 node_header.num_keys -= 1;
 
             } else {//if there're elements exist in the next node.
-                if !next_next_key.is_null() && curr_index != node_header.first_child {
+                //if the key of the next node is changed and this next node is not the first
+                //child.
+                if !next_next_key.is_null() && curr_index != BEGINNING_OF_SLOT {
                     let loc = unsafe {
-                        node.get_data().offset((node_header.keys_offset + curr_index * self.header.attr_length) as isize)
+                        node.get_data().offset((self.header.keys_offset + curr_index * self.header.attr_length) as isize)
                     };
                     unsafe {
                         std::ptr::copy(next_next_key, loc, self.header.attr_length);
@@ -834,7 +838,7 @@ impl IndexHandle {
         let leaf_header = utils::get_header_mut::<LeafHeader>(leaf_node.get_data());
         let leaf_entries = self.get_node_entries(leaf_node.get_data());
         let leaf_keys = unsafe {
-            leaf_node.get_data().offset(self.header.keys_offset)
+            leaf_node.get_data().offset(self.header.keys_offset as isize)
         };
 
         let (curr_index, is_dup) = match self.find_node_insert_index(key_val, leaf_node.get_data()) {
@@ -858,10 +862,13 @@ impl IndexHandle {
             };
         }
 
+        let mut this_next_key = std::ptr::null_mut();
+        let mut key_changed = false;
+
         match leaf_entries[curr_index].et_type {
             EntryType::Unoccupied => {
                 dbg!(&leaf_entries[curr_index]);
-                Err(IndexingError::UnoccupiedEntry)
+                return Err(IndexingError::UnoccupiedEntry)
             },
             EntryType::New => {
                 //check the entry again.
@@ -879,10 +886,10 @@ impl IndexHandle {
                 
                 if curr_index == leaf_header.first_slot {
                     leaf_header.first_slot = next_slot;
+                    key_changed = true;
                 } else {
                     leaf_entries[prev_index].next_slot = next_slot;
                 }
-                Ok(())
             },
             EntryType::Duplicate => {
                 let bucket_ph = match self.pfh.get_page(leaf_entries[curr_index].page_num) {
@@ -892,7 +899,7 @@ impl IndexHandle {
                     },
                     Ok(v) => v
                 };
-                let (to_delete, last_rid, next_next_bucket) = match self.delete_from_bucket(key_val, rid, bucket_ph) {
+                let (to_delete, next_next_bucket) = match self.delete_from_bucket(key_val, rid, bucket_ph) {
                     Err(IndexingError::EntryNotFoundInBucket) => {
                         return Err(IndexingError::InvalidEntry);
                     },
@@ -901,39 +908,51 @@ impl IndexHandle {
                     },
                     Ok(v) => v
                 };
+
                 if let Err(e) = self.pfh.unpin_dirty_page(bucket_ph.get_page_num()) {
-                    dbg!(&e);
+                    dbg!(e);
                     return Err(IndexingError::UnpinPageError);
                 }
 
                 //if the bucket is empty, dispose the page.
                 if to_delete {
-                    if let Some(v) = last_rid {//if the last rid exist.
-                        let bucket_header = utils::get_header_mut::<BucketHeader>(bucket_ph.get_data());
-
-                        if bucket_header.free_slot != NO_MORE_SLOTS {//if the first bucket has space.
-                            let bucket_entries = self.get_bucket_entries(bucket_ph.get_data());
-                            let loc = bucket_header.free_slot;
-                            
-                            bucket_entries[loc].page_num = last_rid.unwrap().get_page_num();
-                            bucket_entries[loc].slot_num = last_rid.unwrap().get_slot_num();
-
-                            bucket_header.free_slot = bucket_entries[loc].next_slot;
-                            if bucket_header.first_slot == BEGINNING_OF_SLOT {
-                                bucket_header.first_slot = loc;
-                                bucket_entries[loc].next_slot = NO_MORE_SLOTS;
-                            } else {
-                                bucket_entries[loc].next_slot = bucket_header.first_slot;
-                                bucket_header.first_slot = loc;
-                            }
-
-                            bucket_header.num_keys += 1;
+                    if next_next_bucket == NO_MORE_PAGES {
+                        //delete this entry
+                        let next_slot = leaf_entries[curr_index].next_slot;
+                        
+                        leaf_entries[curr_index].next_slot = leaf_header.free_slot;
+                        leaf_header.free_slot = curr_index;
+                        
+                        if curr_index == leaf_header.first_slot {
+                            leaf_header.first_slot = next_slot;
+                            key_changed = true;
+                        } else {
+                            leaf_entries[prev_index].next_slot = next_slot;
                         }
+
+                        leaf_header.num_keys -= 1;
+                    } else {//if there are other buckets
+                        leaf_entries[curr_index].page_num = next_next_bucket;
+                    }
+
+                    if let Err(e) = self.pfh.dispose_page(bucket_ph.get_page_num()) {
+                        dbg!(e);
+                        return Err(IndexingError::DisposePageError);
                     }
                 }
-                Ok(())
-            }
+                
+           }
         }
+        let mut to_delete = false;
+        if leaf_header.num_keys == 0 {
+            to_delete = true;
+        }
+        if key_changed && !to_delete {
+            this_next_key = unsafe {
+                leaf_keys.offset((leaf_header.first_slot * self.header.attr_length) as isize)
+            };
+        }
+        Ok((to_delete, this_next_key))
     }
 
     /**
@@ -960,10 +979,9 @@ impl IndexHandle {
      *   3. If the target entry is found in any of the buckets, only the previous bucket
      *      do the delete work. Other buckets just return. 
      */
-    fn delete_from_bucket(&mut self, rid: &RID, bucket_ph: &PageHandle) -> Result<(bool, Option<RID>, u32), IndexingError> {
+    fn delete_from_bucket(&mut self, rid: &RID, bucket_ph: &PageHandle) -> Result<(bool, u32), IndexingError> {
         //results to return
         let mut to_delete = false;
-        let mut last_rid: Option<RID> = None; 
         let mut next_next_bucket = NO_MORE_PAGES;
 
         let bucket_header = utils::get_header_mut::<BucketHeader>(bucket_ph.get_data());
@@ -987,11 +1005,11 @@ impl IndexHandle {
                 Err(e) => {
                     return Err(e);
                 },
-                Ok((a, b, c)) => {
-                    if let None = b {//if last_rid is None, means the entry is found before the next bucket. No matter if that bucket is deleted or not, all job should be done in the next bucket. We don't do anything about it.
-                        return Ok((a, b, c));
+                Ok(v) => {
+                    if !v[0] {//if to_delete is false, means the entry is found before the next bucket. No matter if that bucket is deleted or not, all job should be done in the next bucket. We don't do anything about it.
+                        return Ok(v);
                     }
-                    (to_delete, last_rid, next_next_bucket) = (a, b, c);
+                    (to_delete, next_next_bucket) = v;
                 }
             }
 
@@ -1002,28 +1020,7 @@ impl IndexHandle {
 
             if found {
                 let next_bucket_header = utils::get_header_mut::<BucketHeader>(next_bucket_ph.get_data());
-                if to_delete && next_bucket_header.num_keys == 1 && bucket_header.free_slot != NO_MORE_SLOTS {
-                    let next_bucket_entries = self.get_bucket_entries(next_bucket_ph.get_data());
-                    if let None = last_rid {
-                        return Err(IndexingError::NoneLastRid);
-                    }
-                    let loc = bucket_header.free_slot;
-                    bucket_entries[loc].page_num = last_rid.unwrap().get_page_num();
-                    bucket_entries[loc].slot_num = last_rid.unwrap().get_slot_num();
-
-                    //link free_slot
-                    bucket_header.free_slot = bucket_entries[loc].next_slot;
-                    if bucket_header.first_slot == BEGINNING_OF_SLOT {
-                        bucket_header.first_slot = loc;
-                        bucket_entries[loc].next_slot = NO_MORE_SLOTS;
-                    } else {
-                        bucket_entries[loc].next_slot = bucket_header.first_slot;
-                        bucket_header.first_slot = loc;
-                    }
-                    bucket_header.num_keys += 1;
-                    next_bucket_header.num_keys -= 1;
-                }
-
+                
                 if to_delete && next_bucket_header.num_keys == 0 {
                     if let Err(e) = self.pfh.dispose_page(next_bucket_ph.get_page_num()) {
                         dbg!(&e);
@@ -1032,7 +1029,7 @@ impl IndexHandle {
                     //after disposing the next bucket, link the next next bucket page.
                     bucket_header.next_bucket = next_next_bucket;
                 }
-                return Ok((false, None, next_next_bucket));
+                return Ok((false, next_next_bucket));
             }
         }
 
@@ -1069,16 +1066,12 @@ impl IndexHandle {
             return Err(IndexingError::EntryNotFoundInBucket);
         }
 
-        if bucket_header.num_keys <= 1 {
-            if bucket_header.num_keys == 1 {
-                let last_entry = &bucket_entries[bucket_header.first_slot];
-                last_rid = Some(RID::new(last_entry.page_num, last_entry.slot_num));
-            }
+        if bucket_header.num_keys == 0 {
             to_delete = true;//whether the bucket is deleted depends on the previous bucket capacity.
             next_next_bucket = bucket_header.next_bucket;
         }
 
-        Ok((to_delete, last_rid, next_next_bucket))
+        Ok((to_delete, next_next_bucket))
     }
 
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
