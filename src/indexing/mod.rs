@@ -31,3 +31,7 @@ pub enum AttrType {
 
 //pub mod file_manager;
 pub mod index_handle;
+pub mod file_manager;
+
+#[cfg(test)]
+mod tests;

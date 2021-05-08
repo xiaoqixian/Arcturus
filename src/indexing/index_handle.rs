@@ -131,10 +131,11 @@
  */
 
 use super::AttrType;
-use crate::page_management::page_file::{PageHandle, PageFileHandle};
+use crate::page_management::page_file::{PageHandle, PageFileHandle, PAGE_SIZE};
 use crate::errors::{IndexingError, Error};
 use crate::utils;
 use std::cmp::Ordering;
+use std::mem::{size_of};
 use crate::record_management::record_file_handle::{RID};
 
 const NO_MORE_SLOTS: usize = 1<<32;//as 0 is a valid slot num, so we use 1<<32 to represent a invalid slot_num.
@@ -151,9 +152,8 @@ pub struct IndexFileHeader {
     node_entries_offset: usize,
     bucket_entries_offset: usize,
 
-    max_keys: usize,
-    max_node_entries: usize,
-    max_bucket_entries: usize,
+    max_node_keys: usize,
+    max_bucket_keys: usize,
 
     root_page: u32,
 
@@ -241,6 +241,30 @@ pub struct IndexHandle {
     root_ph: PageHandle //PageHandle associated with the root page.
 }
 
+impl IndexFileHeader {
+    pub fn new(attr_length: usize, attr_type: AttrType, root_page: u32) -> Self {
+        let node_keys_num = (PAGE_SIZE - size_of::<NodeHeader>())/(size_of::<NodeEntry>() + attr_length);
+        let bucket_keys_num = (PAGE_SIZE - size_of::<BucketHeader>())/(size_of::<BucketEntry>());//buckets don't have keys.
+
+        Self {
+            num_entries: 0,
+            attr_length,
+            attr_type,
+            
+            keys_offset: size_of::<NodeHeader>(),
+            node_entries_offset: size_of::<NodeHeader>() + node_keys_num * attr_length,
+            bucket_entries_offset: size_of::<BucketHeader>(),
+
+            max_node_keys: node_keys_num,
+            max_bucket_keys: bucket_keys_num,
+
+            root_page,
+        }
+    }
+}
+
+
+
 impl IndexHandle {
     pub fn new(pfh: &mut PageFileHandle, header: &IndexFileHeader, root_ph: PageHandle) -> Self {
         Self {
@@ -258,7 +282,7 @@ impl IndexHandle {
         let root_header = utils::get_header_mut::<NodeHeader>(self.root_ph.get_data());
         
         //if the root page is full.
-        if root_header.num_keys == self.header.max_keys {
+        if root_header.num_keys == self.header.max_node_keys {
             let new_root_ph = match self.create_new_node(&false) {
                 Err(e) => {
                     dbg!(&e);
@@ -404,7 +428,7 @@ impl IndexHandle {
             };
             let next_node_header = utils::get_header::<NodeHeader>(next_node_ph.get_data());
             
-            if next_node_header.num_keys == self.header.max_keys {
+            if next_node_header.num_keys == self.header.max_node_keys {
                 //if the next node is full, we need to split the next node.
                 let (insert_index, new_node_ph) = match self.split_node(node_ph, next_node_ph, next_node_header.is_leaf, prev_index) {
                     Err(e) => {
@@ -464,7 +488,7 @@ impl IndexHandle {
              */
             let mut bucket_entries = self.get_bucket_entries(ph.get_data());
             let mut bucket_header = utils::get_header_mut::<BucketHeader>(ph.get_data());
-            if bucket_header.next_bucket == NO_MORE_PAGES && bucket_header.num_keys == self.header.max_bucket_entries {
+            if bucket_header.next_bucket == NO_MORE_PAGES && bucket_header.num_keys == self.header.max_bucket_keys {
                 flag = false;
                 let new_ph = match self.create_new_bucket() {
                     Err(e) => {
@@ -546,11 +570,11 @@ impl IndexHandle {
         };
 
         /*
-         * move self.header.max_keys/2 number of entries and keys to the new node.
+         * move self.header.max_node_keys/2 number of entries and keys to the new node.
          */
         let mut prev_index: usize = BEGINNING_OF_SLOT;
         let mut curr_index: usize = full_header.first_slot;
-        for i in 0..(self.header.max_keys/2) {
+        for i in 0..(self.header.max_node_keys/2) {
             prev_index = curr_index;
             curr_index = full_entries[curr_index].next_slot;
         }
@@ -665,7 +689,7 @@ impl IndexHandle {
      * Delete an entry from a B+ tree is no doubt the most difficult operation to 
      * implement.
      * Thus, we decide not to merge nodes when the number of keys in a node is less
-     * than self.header.max_keys/2.
+     * than self.header.max_node_keys/2.
      * Only when the page is empty, the corresponding BufferPage is disposed.
      *
      * TODO: merge nodes.
@@ -1097,10 +1121,10 @@ impl IndexHandle {
         
         let entries = self.get_node_entries(new_ph.get_data());
 
-        for i in 0..self.header.max_keys {
+        for i in 0..self.header.max_node_keys {
             entries[i].et_type = EntryType::Unoccupied;
             entries[i].page_num = 0;//0 is an invalid page num
-            if i == self.header.max_keys - 1 {
+            if i == self.header.max_node_keys - 1 {
                 entries[i].next_slot = NO_MORE_SLOTS;
             } else {
                 entries[i].next_slot = i+1;
@@ -1140,9 +1164,9 @@ impl IndexHandle {
 
         let entries = self.get_bucket_entries(new_ph.get_data());
 
-        for i in 0..(self.header.max_bucket_entries) {
+        for i in 0..(self.header.max_bucket_keys) {
             entries[i].page_num = 0;
-            if i == self.header.max_bucket_entries - 1 {
+            if i == self.header.max_bucket_keys - 1 {
                 entries[i].next_slot = NO_MORE_SLOTS;
             } else {
                 entries[i].next_slot = i+1;
@@ -1255,10 +1279,10 @@ impl IndexHandle {
     }
 
     fn get_node_entries(&self, data: *mut u8) -> &'static mut [NodeEntry] {
-        utils::get_arr_mut::<NodeEntry>(data, self.header.node_entries_offset, self.header.max_node_entries)
+        utils::get_arr_mut::<NodeEntry>(data, self.header.node_entries_offset, self.header.max_node_keys)
     }
 
     fn get_bucket_entries(&self, data: *mut u8) -> &'static mut [BucketEntry] {
-        utils::get_arr_mut::<BucketEntry>(data, self.header.bucket_entries_offset, self.header.max_bucket_entries)
+        utils::get_arr_mut::<BucketEntry>(data, self.header.bucket_entries_offset, self.header.max_bucket_keys)
     }
 }

@@ -10,5 +10,5 @@
 pub mod record_file_manager;
 pub mod record_file_handle;
 
-#[cfg(test)]
-mod tests;
+//#[cfg(test)]
+//mod tests;

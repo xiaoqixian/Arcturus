@@ -101,12 +101,15 @@ pub enum IndexingError {
     IncompleteWrite,
     IncompleteRead,
     FileExist,
+    FileOpenError,
+    FileCreationError,
 
     //page_file part
     AllocatePageError,
     GetPageError,
     UnpinPageError,
     DisposePageError,
+    GetFirstPageError,
 
     FindInsertIndexError,
     AbnormalEntryType,

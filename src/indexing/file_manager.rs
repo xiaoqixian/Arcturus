@@ -13,13 +13,12 @@
  */
 
 use crate::page_management::page_file::{PageFileManager, PageFileHeader};
-use std::os::unix::fs::FileExt;
-use std::collections::HashMap;
 use std::mem::size_of;
 use super::AttrType;
-use super::index_handle::{IndexHandle};
+use super::index_handle::{IndexHandle, IndexFileHeader};
 use crate::errors::IndexingError;
 use std::io::ErrorKind;
+use crate::utils;
 
 #[derive(Debug)]
 pub struct IndexFileManager {
@@ -57,8 +56,42 @@ impl IndexFileManager {
             Ok(v) => v
         };
 
-        let header = unsafe {
-            & *(header_ph.get_data() as *const IndexFileHeader)
+        let header = utils::get_header::<IndexFileHeader>(header_ph.get_data());
+
+        let mut root_ph = match pfh.allocate_page() {
+            Err(e) => {
+                dbg!(e);
+                return Err(IndexingError::AllocatePageError);
+            },
+            Ok(v) => v
+        };
+
+        Ok(IndexHandle::new(&mut pfh, header, root_ph))
+    }
+    
+    pub fn create_file(file_name: &String, index_num: u32, pfm: &mut PageFileManager,  attr_type: AttrType, attr_length: usize) -> Result<IndexHandle, IndexingError> {
+        if !Self::check_attr_validity(attr_type, attr_length) {
+            dbg!(&(attr_type, attr_length));
+            return Err(IndexingError::InvalidAttr);
+        }
+
+        let mut new_name = file_name.clone();
+        new_name.push_str(&index_num.to_string());
+        
+        let mut pfh = match pfm.create_file(&new_name) {
+            Err(e) => {
+                dbg!(&e);
+                return Err(IndexingError::FileCreationError);
+            },
+            Ok(v) => v
+        };
+
+        let header_ph = match pfh.allocate_page() {
+            Err(e) => {
+                dbg!(e);
+                return Err(IndexingError::AllocatePageError);
+            },
+            Ok(v) => v
         };
 
         let root_ph = match pfh.allocate_page() {
@@ -69,46 +102,13 @@ impl IndexFileManager {
             Ok(v) => v
         };
 
-        Ok(IndexHandle::new(pfh, header, root_ph))
-    }
+        let header = IndexFileHeader::new(attr_length, attr_type, root_ph.get_page_num());
 
-
-    pub fn open_file(file_name: &String, index_num: u32, attr_type: AttrType, attr_length: usize) -> Result<File, IndexingError> {
-        if let Some(_) = self.fps.get(file_name) {
-            return Err(IndexingError::FileExist);
+        unsafe {
+            std::ptr::copy(&header as *const _ as *const u8, header_ph.get_data(), size_of::<IndexFileHeader>());
         }
 
-        
-        let mut fp: File;
-        match File::open(&new_name) {
-            Ok(v) => {
-                fp = v.try_clone().unwrap();
-            },
-            Err(e) => match e.kind() {
-                ErrorKind::NotFound => {
-                    fp = OpenOptions::new().read(true).write(true).create(true).open(&new_name).expect("Create File Error");
-                },
-                other_error => {
-                    dbg!(&other_error);
-                    panic!(true);
-                }
-            }
-        }
-        
-        self.num_files += 1;
-        self.fps.insert(new_name.clone(), fp.try_clone().unwrap());
-
-        //write in page file header.
-        let pfh = PageFileHeader::new(self.num_files, attr_length);
-        let sli = unsafe {
-            std::slice::from_raw_parts(&pfh as *const _ as *const u8, size_of::<PageFileHeader>())
-        };
-        let write_bytes = fp.write_at(sli, 0).expect("Unix Write Error");
-        if write_bytes < size_of::<PageFileHeader>() {
-            dbg!(&write_bytes);
-            return Err(IndexingError::IncompleteWrite);
-        }
-        Ok(f.try_clone().unwrap())
+        Ok(IndexHandle::new(&mut pfh, &header, root_ph))
     }
 
     fn check_attr_validity(attr_type: AttrType, attr_length: usize) -> bool {
