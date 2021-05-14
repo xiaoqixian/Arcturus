@@ -8,18 +8,22 @@
  **********************************************/
 
 use crate::page_management::page_file;
-use crate::record_management::record_file_manager;
+use crate::record_management::{record_file_handle, record_file_manager};
+use std::io;
+use std::io::prelude::*;
 
 const record_size: usize = 128;
 
-fn init() -> (page_file::PageFileManager, record_file_manager::RecordFileManager) {
-    (page_file::PageFileManager::new(), record_file_manager::RecordFileManager::create_file(&String::from("Table1"), &mut pfm, record_size).expect("Create RecordFileManager failed"))
+fn init() -> (page_file::PageFileManager, record_file_handle::RecordFileHandle) {
+    let mut pfm = page_file::PageFileManager::new();
+    let mut rfh = record_file_manager::RecordFileManager::create_file(&String::from("Table1"), &mut pfm, record_size).expect("Create RecordFileManager failed");
+    (pfm, rfh)
 }
 
 
 fn get_data() -> *mut u8 {
     use std::fs::OpenOptions;
-    let mut fp = OpenOptions::new().read(true).write(false).open("/home/lunar/Documents/fzf").expect("Open file failed");
+    let mut fp = OpenOptions::new().read(true).write(false).open("/home/lunar/Documents/w").expect("Open file failed");
     let buffer = crate::utils::allocate_buffer(record_size);
     let sli = unsafe {
         std::slice::from_raw_parts_mut(buffer, record_size)
@@ -36,7 +40,7 @@ fn get_data() -> *mut u8 {
 }
 
 
-fn records_insertion(pfm: &mut page_file::PageFileManager, rfh: &mut record_file_manager::RecordFileManager) {
+fn records_insertion(pfm: &mut page_file::PageFileManager, rfh: &mut record_file_handle::RecordFileHandle) {
     let data = get_data();
     use crate::record_management::record_file_handle::RID;
 

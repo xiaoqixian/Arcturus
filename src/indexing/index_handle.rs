@@ -137,6 +137,7 @@ use crate::utils;
 use std::cmp::Ordering;
 use std::mem::{size_of};
 use crate::record_management::record_file_handle::{RID};
+use crate::{ok_or_return, error_return};
 
 const NO_MORE_SLOTS: usize = 1<<32;//as 0 is a valid slot num, so we use 1<<32 to represent a invalid slot_num.
 const BEGINNING_OF_SLOT: usize = 1<<32 + 1;
@@ -328,13 +329,14 @@ impl IndexHandle {
         };
 
         if node_header.is_leaf {
-            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node_ph.get_data()) {
-                Err(e) => {
-                    dbg!(&e);
-                    return Err(IndexingError::FindInsertIndexError);
-                },
-                Ok((a, b)) => (a, b)
-            };
+//            let (prev_index, is_dup) = match self.find_node_insert_index(key_val, node_ph.get_data()) {
+                //Err(e) => {
+                    //dbg!(&e);
+                    //return Err(IndexingError::FindInsertIndexError);
+                //},
+                //Ok((a, b)) => (a, b)
+            //};
+            let (prev_index, is_dup) = ok_or_return!(self, find_node_insert_index(key_val, node_ph.get_data()), IndexingError::FindInsertIndexError);
 
             if !is_dup {
                 //copy key_val to keys
@@ -366,26 +368,11 @@ impl IndexHandle {
                         return Err(IndexingError::AbnormalEntryType);
                     },
                     EntryType::New => {
-                        let bucket_ph = match self.create_new_bucket() {
-                            Err(e) => {
-                                return Err(e);
-                            },
-                            Ok(v) => v
-                        };
+                        let bucket_ph = ok_or_return!(self, create_new_bucket());
                         //insert_into_bucket is in charge of unpinning the page
                         //no matter if it's dirty or not.
-                        match self.insert_into_bucket(bucket_ph, rid) {
-                            Err(e) => {
-                                return Err(e);
-                            },
-                            Ok(_) => {}
-                        }
-                        match self.insert_into_bucket(bucket_ph, &RID::new(prev_entry.page_num, prev_entry.slot_num)) {
-                            Err(e) => {
-                                return Err(e);
-                            },
-                            Ok(_) => {}
-                        }
+                        error_return!(self, insert_into_bucket(bucket_ph, rid));
+                        error_return!(self, insert_into_bucket(bucket_ph, &RID::new(prev_entry.page_num, prev_entry.slot_num)));
                         prev_entry.et_type = EntryType::Duplicate;
                         prev_entry.page_num = bucket_ph.get_page_num();
                     },
