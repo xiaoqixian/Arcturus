@@ -15,7 +15,7 @@ use std::io::prelude::*;
 
 fn get_data() -> *mut u8 {
     use std::fs::OpenOptions;
-    let mut fp = OpenOptions::new().read(true).write(false).open("/home/lunar/Documents/fzf").expect("Open file failed");
+    let mut fp = OpenOptions::new().read(true).write(false).open("/home/lunar/Documents/w").expect("Open file failed");
     let buffer = crate::utils::allocate_buffer(record_size);
     let sli = unsafe {
         std::slice::from_raw_parts_mut(buffer, record_size)

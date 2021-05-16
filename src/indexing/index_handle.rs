@@ -725,12 +725,7 @@ impl IndexHandle {
                     key_changed = true;
 
                 } else {
-                    let prev_index = match Self::find_prev_index(node_entries, node_header.first_slot, curr_index) {
-                        Err(e) => {
-                            return Err(e);
-                        },
-                        Ok(v) => v
-                    };
+                    let prev_index = Self::find_prev_index(node_entries, node_header.first_slot, curr_index)?;
 
                     node_entries[prev_index].next_slot = node_entries[curr_index].next_slot;
                     node_entries[curr_index].next_slot = node_header.free_slot;
@@ -776,12 +771,7 @@ impl IndexHandle {
             leaf_node.get_data().offset(self.header.keys_offset as isize)
         };
 
-        let (curr_index, is_dup) = match self.find_node_insert_index(key_val, leaf_node.get_data()) {
-            Err(e) => {
-                return Err(e);
-            },
-            Ok(v) => v
-        };
+        let (curr_index, is_dup) = self.find_node_insert_index(key_val, leaf_node.get_data())?;
         
         if !is_dup {
             return Err(IndexingError::InvalidEntry);
@@ -789,12 +779,7 @@ impl IndexHandle {
 
         let mut prev_index = curr_index;
         if curr_index != leaf_header.first_slot {
-            prev_index = match Self::find_prev_index(leaf_entries, leaf_header.first_slot, curr_index) {
-                Err(e) => {
-                    return Err(e);
-                },
-                Ok(v) => v
-            };
+            prev_index = Self::find_prev_index(leaf_entries, leaf_header.first_slot, curr_index)?;
         }
 
         let mut this_next_key = std::ptr::null_mut();
@@ -827,13 +812,8 @@ impl IndexHandle {
                 }
             },
             EntryType::Duplicate => {
-                let bucket_ph = match self.pfh.get_page(leaf_entries[curr_index].page_num) {
-                    Err(e) => {
-                        dbg!(&e);
-                        return Err(IndexingError::GetPageError);
-                    },
-                    Ok(v) => v
-                };
+                let bucket_ph = ok_or_return!(self.pfh.get_page(leaf_entries[curr_index].page_num), IndexingError::GetPageError);
+
                 let (to_delete, next_next_bucket) = match self.delete_from_bucket(rid, &bucket_ph) {
                     Err(IndexingError::EntryNotFoundInBucket) => {
                         return Err(IndexingError::InvalidEntry);
@@ -844,10 +824,7 @@ impl IndexHandle {
                     Ok(v) => v
                 };
 
-                if let Err(e) = self.pfh.unpin_dirty_page(bucket_ph.get_page_num()) {
-                    dbg!(e);
-                    return Err(IndexingError::UnpinPageError);
-                }
+                error_return!(self.pfh.unpin_dirty_page(bucket_ph.get_page_num()), IndexingError::UnpinPageError);
 
                 //if the bucket is empty, dispose the page.
                 if to_delete {
@@ -870,10 +847,7 @@ impl IndexHandle {
                         leaf_entries[curr_index].page_num = next_next_bucket;
                     }
 
-                    if let Err(e) = self.pfh.dispose_page(bucket_ph.get_page_num()) {
-                        dbg!(e);
-                        return Err(IndexingError::DisposePageError);
-                    }
+                    error_return!(self.pfh.dispose_page(bucket_ph.get_page_num()), IndexingError::DisposePageError);
                 }
                 
             }
@@ -924,13 +898,7 @@ impl IndexHandle {
 
         //if there's a next bucket, search in it first.
         if bucket_header.next_bucket != NO_MORE_PAGES {
-            let next_bucket_ph = match self.pfh.get_page(bucket_header.next_bucket) {
-                Err(e) => {
-                    dbg!(&e);
-                    return Err(IndexingError::GetPageError);
-                },
-                Ok(v) => v
-            };
+            let next_bucket_ph = ok_or_return!(self.pfh.get_page(bucket_header.next_bucket), IndexingError::GetPageError);
             let mut found = true;
 
             match self.delete_from_bucket(rid, &next_bucket_ph) {
@@ -950,19 +918,13 @@ impl IndexHandle {
                 }
             }
 
-            if let Err(e) = self.pfh.unpin_dirty_page(next_bucket_ph.get_page_num()) {
-                dbg!(&e);
-                return Err(IndexingError::UnpinPageError);
-            }
+            error_return!(self.pfh.unpin_dirty_page(next_bucket_ph.get_page_num()), IndexingError::UnpinPageError);
 
             if found {
                 let next_bucket_header = utils::get_header_mut::<BucketHeader>(next_bucket_ph.get_data());
                 
                 if to_delete && next_bucket_header.num_keys == 0 {
-                    if let Err(e) = self.pfh.dispose_page(next_bucket_ph.get_page_num()) {
-                        dbg!(&e);
-                        return Err(IndexingError::DisposePageError);
-                    }
+                    error_return!(self.pfh.dispose_page(next_bucket_ph.get_page_num()), IndexingError::DisposePageError);
                     //after disposing the next bucket, link the next next bucket page.
                     bucket_header.next_bucket = next_next_bucket;
                 }
@@ -1012,13 +974,7 @@ impl IndexHandle {
     }
 
     fn create_new_node(&mut self, is_leaf: &bool) -> Result<PageHandle, IndexingError> {
-        let new_ph = match self.pfh.allocate_page() {
-            Err(e) => {
-                dbg!(&e);
-                return Err(IndexingError::AllocatePageError);
-            },
-            Ok(v) => v
-        };
+        let new_ph = ok_or_return!(self.pfh.allocate_page(), IndexingError::AllocatePageError);
         let new_nh = unsafe {
             &mut *(new_ph.get_data() as *mut NodeHeader)
         };
@@ -1057,13 +1013,7 @@ impl IndexHandle {
      * If one page is full, allocate another one.
      */
     fn create_new_bucket(&mut self) -> Result<PageHandle, IndexingError> {
-        let new_ph = match self.pfh.allocate_page() {
-            Err(e) => {
-                dbg!(&e);
-                return Err(IndexingError::AllocatePageError);
-            },
-            Ok(v) => v
-        };
+        let new_ph = ok_or_return!(self.pfh.allocate_page(), IndexingError::AllocatePageError);
         let new_bh = unsafe {
             &mut *(new_ph.get_data() as *mut BucketHeader)
         };

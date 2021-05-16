@@ -35,7 +35,8 @@ use super::buffer_manager::BufferManager;
 use std::os::unix::fs::FileExt;
 use std::mem::size_of;
 use std::ptr::NonNull;
-use std::{println as info, println as debug, println as warn, println as error};
+//use std::{println as info, println as debug, println as warn, println as error};
+use crate::{info, debug, error};
 
 use crate::errors::{Error, PageFileError};
 use super::buffer_manager::BufferPage;

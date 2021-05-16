@@ -17,7 +17,8 @@ use std::alloc::{self, Layout};
 use crate::errors::PageFileError;
 use super::page_file::{self, PageHeader};
 
-use std::{println as debug, println as info, println as error};
+//use std::{println as debug, println as info, println as error};
+use crate::{info, debug, error};
 /*
  * Memory and References.
  * Let me explain how I resolve memory passing between functions
@@ -354,10 +355,10 @@ impl BufferManager {
             }
         }
         self.first = index as i32;
-        debug!("self.first points to {}", index);
+        dbg!(&self.first);
         if self.last == -1 {
-            debug!("self.last points to {}", index);
             self.last = index as i32;
+            dbg!(&self.last);
         }
         //dbg!(page.clone_metadata());
     }
@@ -412,6 +413,8 @@ impl BufferManager {
     }
 
     fn internal_alloc(&mut self) -> Result<usize, PageFileError> {
+        dbg!(&self.free);
+        info!("Start to internal alloc");
         if self.free == -1 {
             debug!("No free pages");
             dbg!(&self.last);
@@ -494,6 +497,8 @@ impl BufferManager {
      * initialization work will be done when the page is used.
      */
     pub fn allocate_page(&mut self, page_num: u32, fp: &File) -> Result<*mut u8, PageFileError> {
+        info!("buffer allocate_page start!");
+        dbg!(&self.page_table);
         if let Some(_) = self.page_table.get(&page_num) {
             debug!("The page is in the buffer");
             dbg!(page_num);

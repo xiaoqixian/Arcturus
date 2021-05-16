@@ -29,3 +29,39 @@ macro_rules! error_return {
         }
     }
 }
+
+#[macro_export]
+macro_rules! info {
+    ($string: expr) => {
+        //println!("{}[INFO {}:{}] {}", termion::color::Fg(termion::color::Blue), file!(), line!(), $string);
+        colour::blue_ln!("[INFO {}:{}] {}", file!(), line!(), $string);
+    };
+    ($string: expr, $($formats: expr)*) => {
+        let s = format!($string, $($formats)*);
+        colour::blue_ln!("[INFO {}:{}] {}", file!(), line!(), s);
+    }
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($string: expr) => {
+        //println!("{}[{}:{}] {}", termion::color::Fg(termion::color::Yellow), file!(), line!(), $string);
+        colour::yellow_ln!("[DEBUG {}:{}] {}", file!(), line!(), $string);
+    };
+    ($string: expr, $($formats: expr)*) => {
+        let s = format!($string, $($formats)*);
+        colour::yellow_ln!("[DEBUG {}:{}] {}", file!(), line!(), s);
+    }
+}
+
+#[macro_export]
+macro_rules! error {
+    ($string: expr) => {
+        colour::red!("[ERROR {}:{}] {}", file!(), line!(), $string);
+    };
+    ($string: expr, $($formats: expr)*) => {
+        let s = format!($string, $($formats)*);
+        colour::red!("[ERROR {}:{}] {}", file!(), line!(), s);
+    }
+}
+

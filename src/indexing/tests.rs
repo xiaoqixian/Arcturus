@@ -16,7 +16,7 @@ const record_size: usize = 128;
 
 fn init() -> (page_file::PageFileManager, record_file_handle::RecordFileHandle) {
     let mut pfm = page_file::PageFileManager::new();
-    let mut rfh = record_file_manager::RecordFileManager::create_file(&String::from("Table1"), &mut pfm, record_size).expect("Create RecordFileManager failed");
+    let mut rfh = record_file_manager::RecordFileManager::create_file(&String::from("Table2"), &mut pfm, record_size).expect("Create RecordFileManager failed");
     (pfm, rfh)
 }
 
@@ -46,7 +46,7 @@ fn records_insertion(pfm: &mut page_file::PageFileManager, rfh: &mut record_file
 
     let mut recs: Vec<RID> = Vec::new();
 
-    for i in 0..240 {
+    for i in 0..40 {
         match rfh.insert_record(data) {
             Ok(v) => {
                 dbg!(v);
@@ -60,11 +60,34 @@ fn records_insertion(pfm: &mut page_file::PageFileManager, rfh: &mut record_file
     }
 }
 
-#[test]
+//#[test]
 fn indexing_test1() {
     let v = init();
     let mut pfh = v.0;
     let mut rfh = v.1;
 
     records_insertion(&mut pfh, &mut rfh);
+}
+
+#[test]
+fn index_handle_test1() {
+    let mut pfm = page_file::PageFileManager::new();
+    let mut rfh = record_file_manager::RecordFileManager::create_file(&String::from("Table1"), &mut pfm, record_size).expect("create rfh failed");
+    let data = get_data();
+    use crate::record_management::record_file_handle::RID;
+
+    let mut recs: Vec<RID> = Vec::new();
+
+    for i in 0..40 {
+        match rfh.insert_record(data) {
+            Ok(v) => {
+                dbg!(v);
+                recs.push(v);
+            },
+            Err(e) => {
+                dbg!(e);
+                panic!(format!("Insert {}th record error!", i));
+            }
+        }
+    }
 }
